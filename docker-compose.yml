@@ -1,0 +1,13 @@
+services:
+  multicheck:
+    build: .
+    network_mode: host
+    depends_on:
+      - valkey
+    environment:
+      - VALKEY_HOST=127.0.0.1
+      - VALKEY_PORT=6379
+
+  valkey:
+    image: docker.io/valkey/valkey:latest
+    network_mode: host
