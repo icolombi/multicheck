@@ -9,9 +9,11 @@ Added POST endpoints to allow clients to specify custom blacklists for IP and do
 ### Custom Blacklist Endpoints
 
 ### POST /ip/check
+
 Check an IP address against a custom list of DNS blacklists.
 
 **Example:**
+
 ```bash
 curl -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
@@ -22,9 +24,11 @@ curl -X POST http://localhost:8080/ip/check \
 ```
 
 ### POST /domain/check
+
 Check a domain against a custom list of DNS blacklists.
 
 **Example:**
+
 ```bash
 curl -X POST http://localhost:8080/domain/check \
   -H "Content-Type: application/json" \
@@ -37,6 +41,7 @@ curl -X POST http://localhost:8080/domain/check \
 ## Security Features
 
 ### Input Validation
+
 - IP/domain format validation
 - Blacklist DNS syntax validation:
   - Must be valid DNS names (e.g., `bl.example.org`)
@@ -46,6 +51,7 @@ curl -X POST http://localhost:8080/domain/check \
   - Cannot be empty or whitespace
 
 ### Resource Protection
+
 - Maximum 20 blacklists per request (configurable via `maxCustomBlacklists` in config.toml)
 - JSON decoder rejects unknown fields
 - Proper HTTP status codes (400 for validation errors)
@@ -53,9 +59,11 @@ curl -X POST http://localhost:8080/domain/check \
 ## Implementation Details
 
 ### New Files
+
 - `curl-post-examples.sh` - Script with usage examples and test cases
 
 ### Modified Files
+
 - `main.go`:
   - Added `CheckIpRequest` and `CheckDomainRequest` structs
   - Added `PostCheckIp()` and `PostCheckDomain()` handlers
@@ -93,11 +101,13 @@ curl -X POST http://localhost:8080/domain/check \
 ## Testing
 
 Run the example script to test all scenarios:
+
 ```bash
 ./curl-post-examples.sh
 ```
 
 Test cases include:
+
 - Valid requests with custom blacklists
 - Invalid IP/domain formats
 - Exceeding maximum blacklist limit
@@ -108,6 +118,7 @@ Test cases include:
 ## Configuration
 
 Add to `config.toml` to adjust the maximum limit:
+
 ```toml
 maxCustomBlacklists = 20  # Adjust as needed
 ```
@@ -131,6 +142,7 @@ Added two new fields to JSON logs for improved debugging and monitoring:
 ### Example Logs
 
 **GET request:**
+
 ```json
 {
    "CurrentTime": "2026-01-15T22:45:00Z",
@@ -145,6 +157,7 @@ Added two new fields to JSON logs for improved debugging and monitoring:
 ```
 
 **POST request:**
+
 ```json
 {
    "CurrentTime": "2026-01-15T22:45:30Z",

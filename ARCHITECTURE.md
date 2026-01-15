@@ -6,7 +6,7 @@ Multicheck is a REST API service developed in Go that implements a reputation ve
 
 ## Diagramma dell'Architettura
 
-```
+```txt
 ┌─────────────┐
 │   Client    │
 └──────┬──────┘
@@ -61,6 +61,7 @@ The heart of the service is implemented using the **Gorilla Mux** router, which 
 The POST endpoints `/ip/check` and `/domain/check` allow clients to override the default blacklist configuration by providing a custom list of DNS blacklists. This feature includes:
 
 **Security and Validation:**
+
 - **Input validation**: Strict validation of IP/domain format and blacklist DNS syntax
 - **Resource protection**: Configurable maximum limit (default 20) to prevent resource exhaustion
 - **DNS format checking**: Validates blacklist names against DNS naming rules:
@@ -71,6 +72,7 @@ The POST endpoints `/ip/check` and `/domain/check` allow clients to override the
   - No empty entries or whitespace-only strings
 
 **Request Structure:**
+
 ```json
 {
   "ip": "1.2.3.4",
@@ -83,10 +85,12 @@ The POST endpoints `/ip/check` and `/domain/check` allow clients to override the
 ```
 
 **Error Responses:**
+
 - `400 Bad Request` for invalid input (IP/domain format, blacklist syntax, limit exceeded)
 - `Status: false` with descriptive error messages in response JSON
 
 **Implementation:**
+
 - Uses `json.Decoder` with `DisallowUnknownFields()` to reject malformed requests
 - `validateBlacklists()` function performs comprehensive validation
 - `checkBlacklistIPWithCustomList()` and `checkBlacklistDomainWithCustomList()` separate functions for custom list checking
@@ -170,7 +174,7 @@ resolver = &net.Resolver{
 
 To query IP blacklists, the address must be reversed:
 
-```
+```txt
 Input:  1.2.3.4
 Output: 4.3.2.1.dnsbl.example.org
 ```
@@ -327,7 +331,7 @@ type Log struct {
 
 ### IP/Domain Verification
 
-```
+```txt
 1. Client sends GET request /ip/{ip} or /domain/{domain}
    ↓
 2. Handler validates input (net.ParseIP or validator.IsValidDomain)
@@ -363,7 +367,7 @@ type Log struct {
 
 ### Health Check
 
-```
+```txt
 1. Client sends GET /health
    ↓
 2. Performs PING on Redis
@@ -414,7 +418,7 @@ type Log struct {
 
 ### Error Propagation
 
-```
+```txt
 Redis Error → Added to Errors[] → Service continues
 DNS Error   → Filtered if "no such host" → Aggregated in errorCh
 Invalid IP  → Status: false → Immediate response
