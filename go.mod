@@ -1,6 +1,6 @@
 module multicheck
 
-go 1.25.6
+go 1.25
 
 require (
 	github.com/dchest/validator v0.0.0-20191217151620-8e45250f2371

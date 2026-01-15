@@ -37,6 +37,7 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.ipBlacklist = viper.GetStringSlice("ipBlacklist")
 	configuration.CacheControlMaxAge = viper.GetInt("cacheControlMaxAge")
 	configuration.RedisCacheTTL = viper.GetInt("redisCacheTTL")
+	configuration.MaxCustomBlacklists = viper.GetInt("maxCustomBlacklists")
 	configuration.nameServers = viper.GetStringSlice("nameServers")
 	configuration.listenPort = viper.GetString("listenPort")
 
@@ -69,20 +70,76 @@ func removeIPFromSlice(slice []net.IP) []net.IP {
 	return result
 }
 
+// Valida una lista di blacklist per sintassi DNS e limiti
+func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorMsg string) {
+	// Controllo lista vuota
+	if len(blacklists) == 0 {
+		return false, "blacklist array cannot be empty"
+	}
+
+	// Controllo limite massimo
+	if len(blacklists) > maxAllowed {
+		return false, fmt.Sprintf("too many blacklists: maximum %d allowed, received %d", maxAllowed, len(blacklists))
+	}
+
+	// Validazione sintassi DNS per ogni blacklist
+	for _, bl := range blacklists {
+		// Controllo che non sia vuoto o solo spazi
+		trimmed := strings.TrimSpace(bl)
+		if trimmed == "" {
+			return false, "blacklist entries cannot be empty or whitespace"
+		}
+
+		// Validazione base del formato DNS
+		// Deve contenere almeno un punto e caratteri validi
+		if !strings.Contains(trimmed, ".") {
+			return false, fmt.Sprintf("invalid blacklist format: '%s' (must be a valid DNS name)", trimmed)
+		}
+
+		// Controllo caratteri non validi per DNS
+		// DNS permette: lettere, numeri, trattino e punto
+		for _, char := range trimmed {
+			if !((char >= 'a' && char <= 'z') ||
+				(char >= 'A' && char <= 'Z') ||
+				(char >= '0' && char <= '9') ||
+				char == '-' || char == '.') {
+				return false, fmt.Sprintf("invalid blacklist format: '%s' (contains invalid DNS characters)", trimmed)
+			}
+		}
+
+		// Controllo che non inizi o finisca con punto o trattino
+		if strings.HasPrefix(trimmed, ".") || strings.HasSuffix(trimmed, ".") ||
+			strings.HasPrefix(trimmed, "-") || strings.HasSuffix(trimmed, "-") {
+			return false, fmt.Sprintf("invalid blacklist format: '%s' (cannot start or end with . or -)", trimmed)
+		}
+
+		// Controllo punti consecutivi
+		if strings.Contains(trimmed, "..") {
+			return false, fmt.Sprintf("invalid blacklist format: '%s' (cannot contain consecutive dots)", trimmed)
+		}
+	}
+
+	return true, ""
+}
+
 // Passando un IP restituisce la sua presenza in un elenco di blacklist
 func checkBlacklistIP(ipAddress string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+	return checkBlacklistIPWithCustomList(ipAddress, configuration.ipBlacklist)
+}
 
-	blackLists := configuration.ipBlacklist
+// Passando un IP e una lista custom di blacklist restituisce la sua presenza
+func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+
 	max := len(blackLists)
 	reverseIP := reverseIP(ipAddress)
 	blacklistsActive = make(map[string][]net.IP)
-	ip.BlackListed = false
+	blacklisted = false
 	// WaitGroup
 	var wg sync.WaitGroup
 	errorCh := make(chan string, max)
 	wg.Add(max)
 	for _, blacklist := range blackLists {
-		go checkIPDNS(&wg, blacklist, reverseIP, blacklistsActive, errorCh)
+		go checkIPDNS(&wg, blacklist, reverseIP, blacklistsActive, errorCh, &blacklisted)
 
 	}
 
@@ -93,11 +150,11 @@ func checkBlacklistIP(ipAddress string) (blacklisted bool, blacklistsActive map[
 	wg.Wait()
 	close(errorCh)
 
-	return ip.BlackListed, blacklistsActive, errorList
+	return blacklisted, blacklistsActive, errorList
 }
 
 // Funzione per le query DNS sull'IP
-func checkIPDNS(wg *sync.WaitGroup, blacklist string, reverseIP string, blacklistsActive map[string][]net.IP, errorCh chan string) {
+func checkIPDNS(wg *sync.WaitGroup, blacklist string, reverseIP string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
 	//fmt.Println("Checking " + blacklist)
 	defer wg.Done()
 	var error string
@@ -113,7 +170,7 @@ func checkIPDNS(wg *sync.WaitGroup, blacklist string, reverseIP string, blacklis
 	if len(value) != 0 {
 		//fmt.Print("Blacklisted A: ")
 		//fmt.Println(value)
-		ip.BlackListed = true
+		*blacklisted = true
 		blacklistsActive[blacklist] = value
 	}
 	errorCh <- error
@@ -131,17 +188,21 @@ func reverseIP(ipAddress string) string {
 
 // Passando un dominio restituisce la sua presenza in un elenco di blacklist
 func checkBlacklistDomain(domainName string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+	return checkBlacklistDomainWithCustomList(domainName, configuration.domainBlacklist)
+}
 
-	blackLists := configuration.domainBlacklist
+// Passando un dominio e una lista custom di blacklist restituisce la sua presenza
+func checkBlacklistDomainWithCustomList(domainName string, blackLists []string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+
 	max := len(blackLists)
 	blacklistsActive = make(map[string][]net.IP)
-	domain.BlackListed = false
+	blacklisted = false
 	// WaitGroup
 	var wg sync.WaitGroup
 	errorCh := make(chan string, max)
 	wg.Add(max)
 	for _, blacklist := range blackLists {
-		go checkDomainDNS(&wg, blacklist, domainName, blacklistsActive, errorCh)
+		go checkDomainDNS(&wg, blacklist, domainName, blacklistsActive, errorCh, &blacklisted)
 	}
 
 	error := <-errorCh
@@ -151,11 +212,11 @@ func checkBlacklistDomain(domainName string) (blacklisted bool, blacklistsActive
 	wg.Wait()
 	close(errorCh)
 
-	return domain.BlackListed, blacklistsActive, errorList
+	return blacklisted, blacklistsActive, errorList
 }
 
 // Funzione per le query DNS sul dominio
-func checkDomainDNS(wg *sync.WaitGroup, blacklist string, domainName string, blacklistsActive map[string][]net.IP, errorCh chan string) {
+func checkDomainDNS(wg *sync.WaitGroup, blacklist string, domainName string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
 	defer wg.Done() // Decrease the WaitGroup counter by 1
 	var error string
 
@@ -175,7 +236,7 @@ func checkDomainDNS(wg *sync.WaitGroup, blacklist string, domainName string, bla
 
 	if len(value) != 0 {
 
-		domain.BlackListed = true
+		*blacklisted = true
 		blacklistsActive[blacklist] = value
 	}
 

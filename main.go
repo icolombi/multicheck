@@ -1,15 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
-
 	"time"
 
 	"github.com/dchest/validator"
@@ -27,8 +29,10 @@ type StartLog struct {
 // Struttura per generare il log in formato JSON
 type Log struct {
 	CurrentTime      time.Time
-	Method           string
+	HTTPMethod       string // HTTP method (GET, POST, PUT, etc.)
+	Method           string // Endpoint path
 	Param            string
+	RequestBody      string // JSON body for POST requests
 	Errors           []string
 	MemoryAlloc      uint64  // Memory allocated
 	NumGC            uint32  // Garbage Collection
@@ -41,12 +45,13 @@ type Log struct {
 
 // Struttura per contenere le configurazioni
 type Config struct {
-	domainBlacklist    []string
-	ipBlacklist        []string
-	CacheControlMaxAge int
-	RedisCacheTTL      int
-	nameServers        []string
-	listenPort         string
+	domainBlacklist     []string
+	ipBlacklist         []string
+	CacheControlMaxAge  int
+	RedisCacheTTL       int
+	MaxCustomBlacklists int
+	nameServers         []string
+	listenPort          string
 }
 
 // Struct per rappresentare la risposta di un oggetto di tipo IP
@@ -61,6 +66,12 @@ type Ip struct {
 	Cached      bool                // From Redis?
 }
 
+// Struct per il body della richiesta POST /ip/check
+type CheckIpRequest struct {
+	IP         string   `json:"ip"`
+	Blacklists []string `json:"blacklists"`
+}
+
 // Struct per rappresentare la risposta un oggetto di tipo Domain
 type Domain struct {
 	Domain      string              // The input Domain
@@ -71,6 +82,12 @@ type Domain struct {
 	Errors      []string            // List of errors
 	TimeTaken   float64             // Time taken
 	Cached      bool                // From Redis?
+}
+
+// Struct per il body della richiesta POST /domain/check
+type CheckDomainRequest struct {
+	Domain     string   `json:"domain"`
+	Blacklists []string `json:"blacklists"`
 }
 
 // Struct per rappresentare la risposta di un oggetto DelCache
@@ -87,6 +104,7 @@ type Health struct {
 	Redis            bool
 	RedisConnections int
 	Uptime           time.Duration
+	GoVersion        string
 }
 
 // Struct per l'oggetto di root (Help, pagina principale)
@@ -148,6 +166,8 @@ func main() {
 	r.HandleFunc("/health", HealthCheckHandler).Methods("GET")
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
+	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
+	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
 
 	// Definisco un custom resolver per poter utilizzare dei name server di versi da quelli di sistema
@@ -210,7 +230,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 
 	var endpointsList []string
-	endpointsList = append(endpointsList, "/ip/<ip>", "/domain/<domain>", "/health", "/clear-cache/<object-name>")
+	endpointsList = append(endpointsList, "/ip/<ip>", "/domain/<domain>", "/ip/check (POST)", "/domain/check (POST)", "/health", "/clear-cache/<object-name>")
 
 	endpoints = Root{EndPoints: endpointsList,
 		DomainBlacklist: configuration.domainBlacklist,
@@ -225,7 +245,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), Method: "/", Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, ClientIP: clientIP}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/", Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, ClientIP: clientIP}, "", "   ")
 
 	if err != nil {
 		panic(err)
@@ -252,14 +272,14 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	uptime = time.Duration(time.Since(startTime).Seconds())
 	health.Alive = true
-	health = Health{Alive: health.Alive, Redis: health.Redis, RedisConnections: health.RedisConnections, Uptime: uptime}
+	health = Health{Alive: health.Alive, Redis: health.Redis, RedisConnections: health.RedisConnections, Uptime: uptime, GoVersion: runtime.Version()}
 	json.NewEncoder(w).Encode(health)
 	// Log
 
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), Method: "/health", Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/health", Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
 
 	if err != nil {
 		panic(err)
@@ -337,7 +357,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), Method: "/ip", Param: params["ip"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: ip.Cached, ClientIP: clientIP, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/ip", Param: params["ip"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: ip.Cached, ClientIP: clientIP, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
 
 	if err != nil {
 		panic(err)
@@ -408,7 +428,234 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), Method: "/domain", Param: params["domain"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: domain.Cached, ClientIP: clientIP, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/domain", Param: params["domain"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: domain.Cached, ClientIP: clientIP, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
+
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(u))
+}
+
+// Handler POST per verificare IP con blacklist personalizzate
+func PostCheckIp(w http.ResponseWriter, r *http.Request) {
+	clientIP := r.RemoteAddr
+	start := time.Now()
+	var errors []string
+	var req CheckIpRequest
+
+	// Controllo Redis
+	reply, err := pingRedis()
+	if err != nil || reply != "PONG" {
+		health.Redis = false
+		errors = append(errors, "Redis: "+err.Error())
+	} else {
+		health.Redis = true
+		health.RedisConnections = getRedisConnections()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
+
+	ip.Cached = false
+	ip.Status = true
+	ip.BlackListed = false
+	ip.BlackList = nil
+
+	// Leggi il body per il logging
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		ip.Status = false
+		errors = append(errors, "failed to read request body: "+err.Error())
+		elapsed := time.Since(start).Seconds()
+		ip = Ip{TimeTaken: elapsed, ValidIP: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ip)
+		logRequest("POST", "/ip/check", "", "", errors, elapsed, false, clientIP)
+		return
+	}
+	requestBody := string(bodyBytes)
+
+	// Decodifica il body JSON
+	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.DisallowUnknownFields()
+	err = decoder.Decode(&req)
+	if err != nil {
+		ip.Status = false
+		errors = append(errors, "invalid JSON body: "+err.Error())
+		elapsed := time.Since(start).Seconds()
+		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ip)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+		return
+	}
+
+	// Valida l'IP
+	if net.ParseIP(req.IP) == nil {
+		ip.ValidIP = false
+		ip.Status = false
+		errors = append(errors, "invalid IP address format")
+		elapsed := time.Since(start).Seconds()
+		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ip)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+		return
+	}
+	ip.ValidIP = true
+
+	// Valida le blacklist
+	valid, errorMsg := validateBlacklists(req.Blacklists, configuration.MaxCustomBlacklists)
+	if !valid {
+		ip.Status = false
+		errors = append(errors, errorMsg)
+		elapsed := time.Since(start).Seconds()
+		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: true, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ip)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+		return
+	}
+
+	// Controlla le blacklist personalizzate
+	ip.BlackListed, ip.BlackList, errors = checkBlacklistIPWithCustomList(req.IP, req.Blacklists)
+
+	elapsed := time.Since(start).Seconds()
+	ip = Ip{
+		TimeTaken:   elapsed,
+		IP:          req.IP,
+		Cached:      false,
+		ValidIP:     true,
+		BlackListed: ip.BlackListed,
+		BlackList:   ip.BlackList,
+		Status:      true,
+		Errors:      errors,
+	}
+
+	json.NewEncoder(w).Encode(ip)
+	logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+}
+
+// Handler POST per verificare domini con blacklist personalizzate
+func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
+	clientIP := r.RemoteAddr
+	start := time.Now()
+	var errors []string
+	var req CheckDomainRequest
+
+	// Controllo Redis
+	reply, err := pingRedis()
+	if err != nil || reply != "PONG" {
+		health.Redis = false
+		errors = append(errors, "Redis: "+err.Error())
+	} else {
+		health.Redis = true
+		health.RedisConnections = getRedisConnections()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
+
+	domain.Cached = false
+	domain.Status = true
+	domain.BlackListed = false
+	domain.BlackList = nil
+
+	// Leggi il body per il logging
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		domain.Status = false
+		errors = append(errors, "failed to read request body: "+err.Error())
+		elapsed := time.Since(start).Seconds()
+		domain = Domain{TimeTaken: elapsed, ValidDomain: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(domain)
+		logRequest("POST", "/domain/check", "", "", errors, elapsed, false, clientIP)
+		return
+	}
+	requestBody := string(bodyBytes)
+
+	// Decodifica il body JSON
+	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
+	decoder.DisallowUnknownFields()
+	err = decoder.Decode(&req)
+	if err != nil {
+		domain.Status = false
+		errors = append(errors, "invalid JSON body: "+err.Error())
+		elapsed := time.Since(start).Seconds()
+		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(domain)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+		return
+	}
+
+	// Valida il dominio
+	if !validator.IsValidDomain(req.Domain) {
+		domain.ValidDomain = false
+		domain.Status = false
+		errors = append(errors, "invalid domain format")
+		elapsed := time.Since(start).Seconds()
+		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(domain)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+		return
+	}
+	domain.ValidDomain = true
+
+	// Valida le blacklist
+	valid, errorMsg := validateBlacklists(req.Blacklists, configuration.MaxCustomBlacklists)
+	if !valid {
+		domain.Status = false
+		errors = append(errors, errorMsg)
+		elapsed := time.Since(start).Seconds()
+		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: true, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(domain)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+		return
+	}
+
+	// Controlla le blacklist personalizzate
+	domain.BlackListed, domain.BlackList, errors = checkBlacklistDomainWithCustomList(req.Domain, req.Blacklists)
+
+	elapsed := time.Since(start).Seconds()
+	domain = Domain{
+		TimeTaken:   elapsed,
+		Domain:      req.Domain,
+		Cached:      false,
+		ValidDomain: true,
+		BlackListed: domain.BlackListed,
+		BlackList:   domain.BlackList,
+		Status:      true,
+		Errors:      errors,
+	}
+
+	json.NewEncoder(w).Encode(domain)
+	logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+}
+
+// Helper per il logging (DRY)
+func logRequest(httpMethod string, method string, param string, requestBody string, errors []string, elapsed float64, cached bool, clientIP string) {
+	var memAlloc uint64
+	var numGC uint32
+	memAlloc, numGC = MemUsage()
+	u, err := json.MarshalIndent(Log{
+		CurrentTime:      time.Now(),
+		HTTPMethod:       httpMethod,
+		Method:           method,
+		Param:            param,
+		RequestBody:      requestBody,
+		Errors:           errors,
+		MemoryAlloc:      memAlloc,
+		NumGC:            numGC,
+		TimeTaken:        elapsed,
+		Cached:           cached,
+		ClientIP:         clientIP,
+		Redis:            health.Redis,
+		RedisConnections: health.RedisConnections,
+	}, "", "   ")
 
 	if err != nil {
 		panic(err)
@@ -449,7 +696,7 @@ func DelCache(w http.ResponseWriter, r *http.Request) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), Method: "/clear-cache", Param: key, TimeTaken: elapsed, Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, ClientIP: clientIP, RedisConnections: health.RedisConnections}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/clear-cache", Param: key, TimeTaken: elapsed, Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, ClientIP: clientIP, RedisConnections: health.RedisConnections}, "", "   ")
 
 	if err != nil {
 		panic(err)

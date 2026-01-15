@@ -10,7 +10,7 @@ Multicheck is a REST API service developed in Go that implements a reputation ve
 ┌─────────────┐
 │   Client    │
 └──────┬──────┘
-       │ HTTP Request
+       │ HTTP Request (GET/POST)
        ▼
 ┌─────────────────────────────────────────┐
 │     Gorilla Mux Router (main.go)        │
@@ -19,6 +19,8 @@ Multicheck is a REST API service developed in Go that implements a reputation ve
 │  │  GET /health                    │   │
 │  │  GET /ip/{ip}                   │   │
 │  │  GET /domain/{domain}           │   │
+│  │  POST /ip/check                 │   │
+│  │  POST /domain/check             │   │
 │  │  GET /clear-cache/{key}         │   │
 │  └─────────────────────────────────┘   │
 └──────┬──────────────────────────────────┘
@@ -48,9 +50,47 @@ The heart of the service is implemented using the **Gorilla Mux** router, which 
 
 - **`RootHandler()`**: Endpoint `/` that returns documentation of available endpoints and current configuration
 - **`HealthCheckHandler()`**: Endpoint `/health` for monitoring service status and Redis connectivity
-- **`GetIp()`**: Endpoint `/ip/{ip}` to verify the reputation of an IP address
-- **`GetDomain()`**: Endpoint `/domain/{domain}` to verify the reputation of a domain
+- **`GetIp()`**: Endpoint `/ip/{ip}` for IP verification against configured blacklists
+- **`GetDomain()`**: Endpoint `/domain/{domain}` for domain verification against configured blacklists
+- **`PostCheckIp()`**: Endpoint `/ip/check` (POST) for IP verification with custom blacklists
+- **`PostCheckDomain()`**: Endpoint `/domain/check` (POST) for domain verification with custom blacklists
 - **`DelCache()`**: Endpoint `/clear-cache/{key}` to manually invalidate a cache entry
+
+#### Custom Blacklist Endpoints (POST)
+
+The POST endpoints `/ip/check` and `/domain/check` allow clients to override the default blacklist configuration by providing a custom list of DNS blacklists. This feature includes:
+
+**Security and Validation:**
+- **Input validation**: Strict validation of IP/domain format and blacklist DNS syntax
+- **Resource protection**: Configurable maximum limit (default 20) to prevent resource exhaustion
+- **DNS format checking**: Validates blacklist names against DNS naming rules:
+  - Must contain at least one dot
+  - Only alphanumeric, dots, and hyphens allowed
+  - Cannot start/end with dot or hyphen
+  - No consecutive dots
+  - No empty entries or whitespace-only strings
+
+**Request Structure:**
+```json
+{
+  "ip": "1.2.3.4",
+  "blacklists": [
+    "zen.spamhaus.org",
+    "bl.spamcop.net",
+    "cbl.abuseat.org"
+  ]
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` for invalid input (IP/domain format, blacklist syntax, limit exceeded)
+- `Status: false` with descriptive error messages in response JSON
+
+**Implementation:**
+- Uses `json.Decoder` with `DisallowUnknownFields()` to reject malformed requests
+- `validateBlacklists()` function performs comprehensive validation
+- `checkBlacklistIPWithCustomList()` and `checkBlacklistDomainWithCustomList()` separate functions for custom list checking
+- No caching for custom blacklist requests (always fresh results)
 
 #### Data Structures
 

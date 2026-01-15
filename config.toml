@@ -21,6 +21,8 @@ cacheControlMaxAge = 3600 # Seconds
 
 redisCacheTTL = 300 # Seconds
 
+maxCustomBlacklists = 20 # Maximum number of custom blacklists allowed in POST requests
+
 nameServers = """
 8.8.4.4
 8.8.8.8

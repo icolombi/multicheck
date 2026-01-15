@@ -17,7 +17,7 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 
 ### Prerequisites
 
-- Go 1.16+
+- Go 1.25+
 - Redis server
 - Docker (optional)
 
@@ -112,6 +112,143 @@ curl http://localhost:8080/domain/example.com
 }
 ```
 
+### Custom Blacklist Check - IP (POST)
+
+```bash
+POST /ip/check
+Content-Type: application/json
+```
+
+Checks an IP address against a custom list of blacklists, overriding the default configuration.
+
+**Request Body:**
+
+```json
+{
+  "ip": "1.2.3.4",
+  "blacklists": [
+    "zen.spamhaus.org",
+    "bl.spamcop.net",
+    "cbl.abuseat.org"
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "IP": "1.2.3.4",
+  "ValidIP": true,
+  "BlackListed": false,
+  "Status": true,
+  "BlackList": {},
+  "Errors": [],
+  "TimeTaken": 0.312,
+  "Cached": false
+}
+```
+
+**Validation Rules:**
+
+- `ip`: Must be a valid IP address format
+- `blacklists`: Array of DNS blacklist domains
+  - Cannot be empty
+  - Maximum 20 blacklists (configurable via `maxCustomBlacklists` in config.toml)
+  - Each entry must be a valid DNS name format
+  - No invalid DNS characters allowed
+  - Cannot start/end with `.` or `-`
+  - No consecutive dots allowed
+
+**Error Responses:**
+
+```json
+{
+  "IP": "invalid",
+  "ValidIP": false,
+  "Status": false,
+  "Errors": ["invalid IP address format"],
+  "TimeTaken": 0.001,
+  "Cached": false
+}
+```
+
+```json
+{
+  "IP": "1.2.3.4",
+  "ValidIP": true,
+  "Status": false,
+  "Errors": ["too many blacklists: maximum 20 allowed, received 25"],
+  "TimeTaken": 0.001,
+  "Cached": false
+}
+```
+
+### Custom Blacklist Check - Domain (POST)
+
+```bash
+POST /domain/check
+Content-Type: application/json
+```
+
+Checks a domain against a custom list of blacklists, overriding the default configuration.
+
+**Request Body:**
+
+```json
+{
+  "domain": "example.com",
+  "blacklists": [
+    "dbl.spamhaus.org",
+    "multi.uribl.com"
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "Domain": "example.com",
+  "ValidDomain": true,
+  "BlackListed": false,
+  "Status": true,
+  "BlackList": {},
+  "Errors": [],
+  "TimeTaken": 0.245,
+  "Cached": false
+}
+```
+
+**Validation Rules:**
+
+- `domain`: Must be a valid domain name format
+- `blacklists`: Same validation rules as IP check endpoint
+
+**Error Responses:**
+
+```json
+{
+  "Domain": "invalid domain!",
+  "ValidDomain": false,
+  "Status": false,
+  "Errors": ["invalid domain format"],
+  "TimeTaken": 0.001,
+  "Cached": false
+}
+```
+
+```json
+{
+  "Domain": "example.com",
+  "ValidDomain": true,
+  "Status": false,
+  "Errors": ["invalid blacklist format: 'AAAA' (must be a valid DNS name)"],
+  "TimeTaken": 0.001,
+  "Cached": false
+}
+```
+
 ### Health Check
 
 ```bash
@@ -127,7 +264,8 @@ Checks the service status, Redis connectivity, and uptime.
   "Alive": true,
   "Redis": true,
   "RedisConnections": 1,
-  "Uptime": 3600000000000
+  "Uptime": 3600000000000,
+  "GoVersion": "go1.25.5"
 }
 ```
 
@@ -169,6 +307,9 @@ cacheControlMaxAge = 3600
 # Redis cache TTL (seconds)
 redisCacheTTL = 300
 
+# Maximum custom blacklists allowed in POST requests
+maxCustomBlacklists = 20
+
 # DNS nameservers to use
 nameServers = """
 8.8.4.4
@@ -199,8 +340,10 @@ For a detailed description of the project architecture, see [ARCHITECTURE.md](AR
 Multicheck generates structured logs in JSON format on stdout. Each request is logged with:
 
 - Timestamp
+- HTTP Method (GET, POST, PUT, etc.)
 - Method/Endpoint
 - Requested parameter
+- Request body (for POST requests)
 - Allocated memory and garbage collection
 - Execution time
 - Cache status (hit/miss)
@@ -213,14 +356,36 @@ Multicheck generates structured logs in JSON format on stdout. Each request is l
 ```json
 {
    "CurrentTime": "2026-01-12T10:30:45Z",
+   "HTTPMethod": "GET",
    "Method": "/ip",
    "Param": "1.2.3.4",
+   "RequestBody": "",
    "Errors": [],
    "MemoryAlloc": 2048,
    "NumGC": 5,
    "TimeTaken": 0.245,
    "Cached": false,
    "ClientIP": "192.168.1.100:54321",
+   "Redis": true,
+   "RedisConnections": 1
+}
+```
+
+**Log example for POST requests:**
+
+```json
+{
+   "CurrentTime": "2026-01-15T22:45:30Z",
+   "HTTPMethod": "POST",
+   "Method": "/ip/check",
+   "Param": "1.2.3.4",
+   "RequestBody": "{\"ip\":\"1.2.3.4\",\"blacklists\":[\"zen.spamhaus.org\",\"bl.spamcop.net\"]}",
+   "Errors": [],
+   "MemoryAlloc": 2560,
+   "NumGC": 7,
+   "TimeTaken": 0.312,
+   "Cached": false,
+   "ClientIP": "192.168.1.100:54322",
    "Redis": true,
    "RedisConnections": 1
 }
