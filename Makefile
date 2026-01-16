@@ -7,6 +7,7 @@ help:
 	@echo "  make build-compose - Build and start the podman-compose services"
 	@echo "  make start    - Start the podman-compose services"
 	@echo "  make stop     - Stop the podman-compose services"
+	@echo "  make logs     - Follow logs from running containers"
 build:
 	@go build -o ./bin/multicheck
 	@strip ./bin/multicheck
@@ -17,10 +18,8 @@ test:
 	@go test -v
 build-compose:
 	@export PODMAN_IGNORE_CGROUPSV1_WARNING=1 && \
-	podman-compose down --remove-orphans 2>/dev/null || true && \
 	podman-compose up --build --force-recreate
 start:
-	podman-compose down 2>/dev/null || true
-	podman-compose up -d
+	@podman-compose up
 stop:
-	podman-compose down
+	@podman-compose down

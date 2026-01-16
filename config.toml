@@ -15,7 +15,8 @@ bl.mailspike.net"""
 domainBlacklist = """
 multi.uribl.com
 abuse.spfbl.net
-dbl.spamhaus.org"""
+dbl.spamhaus.org
+multi.surbl.org"""
 
 cacheControlMaxAge = 3600 # Seconds
 
