@@ -123,20 +123,8 @@ var startLog StartLog
 // Variabile per contenere le configurazioni
 var configuration Config
 
-// Variabile per contenere le informazioni sull'IP
-var ip Ip
-
-// Variabile per contenere le informazioni sul dominio
-var domain Domain
-
-// Variabile per contenere le informazioni sull'healthckeck
-var health Health
-
 // Variabile per contenere le informazioni sugli endpoints
 var endpoints Root
-
-// Variabile per contenere le informazioni sul metodo ClearaCache
-var clearCache ClearCache
 
 var c = redisConnect()
 
@@ -257,6 +245,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 	var errors []string
+	var health Health
 	w.Header().Set("Content-Type", "application/json")
 
 	// Controllo lo stato di Redis
@@ -292,14 +281,16 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
 	var errors []string
+	var ip Ip
 
+	redisAvailable := false
+	redisConnections := 0
 	reply, err := pingRedis()
 	if err != nil || reply != "PONG" {
-		health.Redis = false
 		errors = append(errors, "Redis: "+err.Error())
 	} else {
-		health.Redis = true
-		health.RedisConnections = getRedisConnections()
+		redisAvailable = true
+		redisConnections = getRedisConnections()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
@@ -357,7 +348,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/ip", Param: params["ip"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: ip.Cached, ClientIP: clientIP, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/ip", Param: params["ip"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: ip.Cached, ClientIP: clientIP, Redis: redisAvailable, RedisConnections: redisConnections}, "", "   ")
 
 	if err != nil {
 		panic(err)
@@ -370,14 +361,17 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
 	var errors []string
+	var domain Domain
+
+	redisAvailable := false
+	redisConnections := 0
 	reply, err := pingRedis()
 	if err != nil || reply != "PONG" {
-		health.Redis = false
 		errors = append(errors, "Redis: "+err.Error())
 
 	} else {
-		health.Redis = true
-		health.RedisConnections = getRedisConnections()
+		redisAvailable = true
+		redisConnections = getRedisConnections()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -428,7 +422,7 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/domain", Param: params["domain"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: domain.Cached, ClientIP: clientIP, Redis: health.Redis, RedisConnections: health.RedisConnections}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/domain", Param: params["domain"], Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, TimeTaken: elapsed, Cached: domain.Cached, ClientIP: clientIP, Redis: redisAvailable, RedisConnections: redisConnections}, "", "   ")
 
 	if err != nil {
 		panic(err)
@@ -442,15 +436,17 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var errors []string
 	var req CheckIpRequest
+	var ip Ip
 
 	// Controllo Redis
+	redisAvailable := false
+	redisConnections := 0
 	reply, err := pingRedis()
 	if err != nil || reply != "PONG" {
-		health.Redis = false
 		errors = append(errors, "Redis: "+err.Error())
 	} else {
-		health.Redis = true
-		health.RedisConnections = getRedisConnections()
+		redisAvailable = true
+		redisConnections = getRedisConnections()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -470,7 +466,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", "/ip/check", "", "", errors, elapsed, false, clientIP)
+		logRequest("POST", "/ip/check", "", "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 	requestBody := string(bodyBytes)
@@ -486,7 +482,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -499,7 +495,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 	ip.ValidIP = true
@@ -513,7 +509,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: true, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -533,7 +529,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(ip)
-	logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP)
+	logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }
 
 // Handler POST per verificare domini con blacklist personalizzate
@@ -542,15 +538,17 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var errors []string
 	var req CheckDomainRequest
+	var domain Domain
 
 	// Controllo Redis
+	redisAvailable := false
+	redisConnections := 0
 	reply, err := pingRedis()
 	if err != nil || reply != "PONG" {
-		health.Redis = false
 		errors = append(errors, "Redis: "+err.Error())
 	} else {
-		health.Redis = true
-		health.RedisConnections = getRedisConnections()
+		redisAvailable = true
+		redisConnections = getRedisConnections()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -570,7 +568,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", "/domain/check", "", "", errors, elapsed, false, clientIP)
+		logRequest("POST", "/domain/check", "", "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 	requestBody := string(bodyBytes)
@@ -586,7 +584,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -599,7 +597,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 	domain.ValidDomain = true
@@ -613,7 +611,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: true, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -633,11 +631,11 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(domain)
-	logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP)
+	logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }
 
 // Helper per il logging (DRY)
-func logRequest(httpMethod string, method string, param string, requestBody string, errors []string, elapsed float64, cached bool, clientIP string) {
+func logRequest(httpMethod string, method string, param string, requestBody string, errors []string, elapsed float64, cached bool, clientIP string, redisAvailable bool, redisConnections int) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
@@ -653,8 +651,8 @@ func logRequest(httpMethod string, method string, param string, requestBody stri
 		TimeTaken:        elapsed,
 		Cached:           cached,
 		ClientIP:         clientIP,
-		Redis:            health.Redis,
-		RedisConnections: health.RedisConnections,
+		Redis:            redisAvailable,
+		RedisConnections: redisConnections,
 	}, "", "   ")
 
 	if err != nil {
@@ -669,14 +667,17 @@ func DelCache(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
 	var errors []string
+	var clearCache ClearCache
+
+	redisAvailable := false
+	redisConnections := 0
 	reply, err := pingRedis()
 	if err != nil || reply != "PONG" {
-		health.Redis = false
 		errors = append(errors, "Redis: "+err.Error())
 
 	} else {
-		health.Redis = true
-		health.RedisConnections = getRedisConnections()
+		redisAvailable = true
+		redisConnections = getRedisConnections()
 	}
 	params := mux.Vars(r)
 	key := params["key"]
@@ -696,7 +697,7 @@ func DelCache(w http.ResponseWriter, r *http.Request) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/clear-cache", Param: key, TimeTaken: elapsed, Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, ClientIP: clientIP, RedisConnections: health.RedisConnections}, "", "   ")
+	u, err := json.MarshalIndent(Log{CurrentTime: time.Now(), HTTPMethod: "GET", Method: "/clear-cache", Param: key, TimeTaken: elapsed, Errors: errors, MemoryAlloc: memAlloc, NumGC: numGC, ClientIP: clientIP, Redis: redisAvailable, RedisConnections: redisConnections}, "", "   ")
 
 	if err != nil {
 		panic(err)

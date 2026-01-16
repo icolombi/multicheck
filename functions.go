@@ -134,12 +134,13 @@ func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string) (blac
 	reverseIP := reverseIP(ipAddress)
 	blacklistsActive = make(map[string][]net.IP)
 	blacklisted = false
-	// WaitGroup
+	// WaitGroup e Mutex per proteggere accessi concorrenti alla map
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 	errorCh := make(chan string, max)
 	wg.Add(max)
 	for _, blacklist := range blackLists {
-		go checkIPDNS(&wg, blacklist, reverseIP, blacklistsActive, errorCh, &blacklisted)
+		go checkIPDNS(&wg, &mu, blacklist, reverseIP, blacklistsActive, errorCh, &blacklisted)
 
 	}
 
@@ -154,7 +155,7 @@ func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string) (blac
 }
 
 // Funzione per le query DNS sull'IP
-func checkIPDNS(wg *sync.WaitGroup, blacklist string, reverseIP string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
+func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
 	//fmt.Println("Checking " + blacklist)
 	defer wg.Done()
 	var error string
@@ -171,7 +172,10 @@ func checkIPDNS(wg *sync.WaitGroup, blacklist string, reverseIP string, blacklis
 		//fmt.Print("Blacklisted A: ")
 		//fmt.Println(value)
 		*blacklisted = true
+		// Proteggo la scrittura sulla map condivisa
+		mu.Lock()
 		blacklistsActive[blacklist] = value
+		mu.Unlock()
 	}
 	errorCh <- error
 }
@@ -197,12 +201,13 @@ func checkBlacklistDomainWithCustomList(domainName string, blackLists []string) 
 	max := len(blackLists)
 	blacklistsActive = make(map[string][]net.IP)
 	blacklisted = false
-	// WaitGroup
+	// WaitGroup e Mutex per proteggere accessi concorrenti alla map
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 	errorCh := make(chan string, max)
 	wg.Add(max)
 	for _, blacklist := range blackLists {
-		go checkDomainDNS(&wg, blacklist, domainName, blacklistsActive, errorCh, &blacklisted)
+		go checkDomainDNS(&wg, &mu, blacklist, domainName, blacklistsActive, errorCh, &blacklisted)
 	}
 
 	error := <-errorCh
@@ -216,7 +221,7 @@ func checkBlacklistDomainWithCustomList(domainName string, blackLists []string) 
 }
 
 // Funzione per le query DNS sul dominio
-func checkDomainDNS(wg *sync.WaitGroup, blacklist string, domainName string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
+func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domainName string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
 	defer wg.Done() // Decrease the WaitGroup counter by 1
 	var error string
 
@@ -237,7 +242,10 @@ func checkDomainDNS(wg *sync.WaitGroup, blacklist string, domainName string, bla
 	if len(value) != 0 {
 
 		*blacklisted = true
+		// Proteggo la scrittura sulla map condivisa
+		mu.Lock()
 		blacklistsActive[blacklist] = value
+		mu.Unlock()
 	}
 
 	// Debug tempo esecuzione query DNS

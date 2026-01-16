@@ -11,3 +11,6 @@ services:
   valkey:
     image: docker.io/valkey/valkey:latest
     network_mode: host
+    command: valkey-server /usr/local/etc/valkey/valkey.conf
+    volumes:
+      - ./valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
