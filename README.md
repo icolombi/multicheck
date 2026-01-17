@@ -7,7 +7,8 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 - **IP Verification**: Checks IP addresses against configurable DNS blacklists (DNSBL)
 - **Domain Verification**: Checks domains against specialized domain blacklists
 - **Concurrent Lookups**: Uses goroutines for high-speed parallel DNS queries
-- **Intelligent Caching**: Redis caching system to reduce response times
+- **Intelligent Caching**: Redis caching system for both GET and POST endpoints to reduce response times
+- **Custom Blacklists**: POST endpoints allow specifying custom blacklists per request
 - **Health Check**: Monitoring endpoint to verify service and Redis status
 - **Configurable**: Customizable blacklists and parameters via TOML file
 - **JSON Logging**: Structured logs in JSON format for easy parsing and analysis
@@ -119,7 +120,7 @@ POST /ip/check
 Content-Type: application/json
 ```
 
-Checks an IP address against a custom list of blacklists, overriding the default configuration.
+Checks an IP address against a custom list of blacklists, overriding the default configuration. Results are cached in Redis using a key format `post:ip:<ip>:<hash>` where the hash is generated from the sorted blacklist array.
 
 **Request Body:**
 
@@ -155,6 +156,8 @@ Checks an IP address against a custom list of blacklists, overriding the default
   "Cached": false
 }
 ```
+
+**Note:** The `Cached` field will be `true` when the response is served from Redis cache. Requests with identical IP and blacklist array (regardless of order) will result in cache hits. The `nameservers` parameter does not affect cache keys since DNS results should be consistent across different nameservers.
 
 **Validation Rules:**
 
@@ -212,6 +215,8 @@ Checks an IP address against a custom list of blacklists, overriding the default
 POST /domain/check
 Content-Type: application/json
 ```
+
+Checks a domain against a custom list of blacklists, overriding the default configuration. Results are cached in Redis using a key format `post:domain:<domain>:<hash>` where the hash is generated from the sorted blacklist array.
 
 ```json
 ,
@@ -307,13 +312,21 @@ Checks the service status, Redis connectivity, and uptime.
 GET /clear-cache/{key}
 ```
 
-Removes a specific key from the Redis cache (key = IP or domain).
+Removes a specific key from the Redis cache.
 
-**Example:**
+**Examples:**
 
 ```bash
+# Clear GET endpoint cache
 curl http://localhost:8080/clear-cache/1.2.3.4
+curl http://localhost:8080/clear-cache/example.com
+
+# Clear POST endpoint cache (requires full key with hash)
+curl http://localhost:8080/clear-cache/post:ip:1.2.3.4:a3f5c8d12e9b7f6a
+curl http://localhost:8080/clear-cache/post:domain:example.com:f7b2d9e4c1a8f563
 ```
+
+**Note:** For POST endpoint caches, you need to provide the complete cache key including the hash. The hash is generated from the sorted blacklist array used in the original request.
 
 ## ⚙️ Configuration
 

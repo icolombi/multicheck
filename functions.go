@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"net"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -365,4 +368,28 @@ func delRedisKey(key string) (err error) {
 	_, err = conn.Do("DEL", key)
 
 	return err
+}
+
+// generateBlacklistHash creates a SHA256 hash of sorted blacklists (truncated to 16 chars)
+// Used to generate cache keys for POST endpoints with custom blacklists
+func generateBlacklistHash(blacklists []string) string {
+	// Sort blacklists to ensure consistent hash regardless of order
+	sortedBlacklists := make([]string, len(blacklists))
+	copy(sortedBlacklists, blacklists)
+	sort.Strings(sortedBlacklists)
+
+	// Create hash from sorted blacklists
+	data := strings.Join(sortedBlacklists, ",")
+	hash := sha256.Sum256([]byte(data))
+	hashStr := hex.EncodeToString(hash[:])
+
+	// Truncate to 16 characters for readability
+	return hashStr[:16]
+}
+
+// buildPostCacheKey creates a Redis cache key for POST endpoints
+// Format: post:ip:<ip>:<hash> or post:domain:<domain>:<hash>
+func buildPostCacheKey(keyType, identifier string, blacklists []string) string {
+	hash := generateBlacklistHash(blacklists)
+	return fmt.Sprintf("post:%s:%s:%s", keyType, identifier, hash)
 }

@@ -24,9 +24,11 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 
 ### Data Flow
 1. Client requests `/ip/{ip}`, `/domain/{domain}`, or POST to `/ip/check` or `/domain/check`
-2. Handler checks Redis cache first (`getRedisKey`) - only for GET endpoints
+2. Handler checks Redis cache first (`getRedisKey`):
+   - GET endpoints: use simple key (IP or domain)
+   - POST endpoints: use composite key `post:ip:<ip>:<hash>` or `post:domain:<domain>:<hash>` where hash is SHA256 of sorted blacklist array
 3. On cache miss: concurrent DNS lookups against all blacklists using goroutines (`checkBlacklistIP`/`checkBlacklistDomain`)
-4. Results cached in Redis with TTL (`setRedisKey`) - only for GET endpoints
+4. Results cached in Redis with TTL (`setRedisKey`) for both GET and POST endpoints
 5. JSON response with blacklist status, timing, and cache hit indicator
 
 ### Version Information
@@ -50,11 +52,13 @@ Functions:
 - `checkBlacklistIPWithCustomList()` - Main IP check with optional custom resolver
 - `checkBlacklistDomainWithCustomList()` - Main domain check with optional custom resolver
 
-##**Cache key**: IP address or domain name (as-is)
+##**Cache key**: 
+  - **GET endpoints**: IP address or domain name (as-is)
+  - **POST endpoints**: `post:ip:<ip>:<hash>` or `post:domain:<domain>:<hash>` where hash is 16-char truncated SHA256 of sorted blacklist array
 - **TTL**: `redisCacheTTL` seconds from config (default 300s)
 - **What's cached**: Complete response including `BlackListed`, `BlackList`, `ValidIP`/`ValidDomain`, `TimeTaken`, `Errors`
 - **Cache indicator**: Set `Cached: true` in response when served from Redis
-- **Only for GET endpoints**: POST endpoints with custom blacklists/nameservers never use cache
+- **Cache independence**: POST endpoints cache based on blacklist array only (nameservers don't affect cache key since DNS results should be consistent)
 
 ### Caching Levels
 1. **Client-side**: `cacheControlMaxAge` (default 3600s) - HTTP header tells clients how long to cache

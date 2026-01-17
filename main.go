@@ -533,7 +533,23 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Crea resolver custom se sono forniti nameserver, altrimenti usa nil (userà quello globale)
+	// Generate cache key for POST request
+	cacheKey := buildPostCacheKey("ip", req.IP, req.Blacklists)
+
+	// Check Redis cache first
+	value, err := getRedisKey(cacheKey)
+	if err == nil {
+		// Found in cache
+		json.Unmarshal([]byte(value), &ip)
+		ip.Cached = true
+		elapsed := time.Since(start).Seconds()
+		ip.TimeTaken = elapsed
+		json.NewEncoder(w).Encode(ip)
+		logRequest("POST", "/ip/check", req.IP, requestBody, ip.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	// Not in cache, create resolver and check blacklists
 	var customResolver *net.Resolver
 	if len(req.Nameservers) > 0 {
 		customResolver = createCustomResolver(req.Nameservers)
@@ -554,8 +570,16 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		Errors:      errors,
 	}
 
+	// Save to cache
+	valueToCache, _ := json.Marshal(ip)
+	valueStr := string(valueToCache)
+	err = setRedisKey(cacheKey, valueStr)
+	if err != nil {
+		ip.Errors = append(ip.Errors, "cache save error: "+err.Error())
+	}
+
 	json.NewEncoder(w).Encode(ip)
-	logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+	logRequest("POST", "/ip/check", req.IP, requestBody, ip.Errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }
 
 // Handler POST per verificare domini con blacklist personalizzate
@@ -654,7 +678,23 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Crea resolver custom se sono forniti nameserver, altrimenti usa nil (userà quello globale)
+	// Generate cache key for POST request
+	cacheKey := buildPostCacheKey("domain", req.Domain, req.Blacklists)
+
+	// Check Redis cache first
+	value, err := getRedisKey(cacheKey)
+	if err == nil {
+		// Found in cache
+		json.Unmarshal([]byte(value), &domain)
+		domain.Cached = true
+		elapsed := time.Since(start).Seconds()
+		domain.TimeTaken = elapsed
+		json.NewEncoder(w).Encode(domain)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	// Not in cache, create resolver and check blacklists
 	var customResolver *net.Resolver
 	if len(req.Nameservers) > 0 {
 		customResolver = createCustomResolver(req.Nameservers)
@@ -675,8 +715,16 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		Errors:      errors,
 	}
 
+	// Save to cache
+	valueToCache, _ := json.Marshal(domain)
+	valueStr := string(valueToCache)
+	err = setRedisKey(cacheKey, valueStr)
+	if err != nil {
+		domain.Errors = append(domain.Errors, "cache save error: "+err.Error())
+	}
+
 	json.NewEncoder(w).Encode(domain)
-	logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+	logRequest("POST", "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }
 
 // Helper per il logging (DRY)
