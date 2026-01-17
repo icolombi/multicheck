@@ -222,7 +222,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 
 	var endpointsList []string
-	endpointsList = append(endpointsList, "/ip/<ip>", "/domain/<domain>", "/ip/check (POST)", "/domain/check (POST)", "/health", "/clear-cache/<object-name>")
+	endpointsList = append(endpointsList, "GET /ip/<ip>", "GET /domain/<domain>", "POST /ip/check", "POST /domain/check", "GET /health", "GET /clear-cache/<object-name>")
 
 	endpoints = Root{EndPoints: endpointsList,
 		DomainBlacklist: configuration.domainBlacklist,
