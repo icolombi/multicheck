@@ -9,6 +9,9 @@
   - Git commit messages (clear and descriptive)
 - Follow Go best practices and idiomatic patterns
 - Use structured error handling with descriptive messages
+- Every input must be validated and sanitized to prevent injection attacks and resource exhaustion
+- Use context-aware logging with structured JSON output for easy parsing
+- Write unit tests for all new functionality and edge cases
 
 ## Project Overview
 Multicheck is a Go-based REST API service that checks domain and IP reputation against DNS-based blacklists (DNSBL). It uses Redis for caching results and provides concurrent DNS lookups for fast blacklist checking.
@@ -20,10 +23,10 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 - **[functions.go](../functions.go)** - DNS blacklist checking logic with concurrent goroutines and WaitGroups
 - **[db.go](../db.go)** - Redis connection pool management using redigo
 - **[credentialstore/](../credentialstore/)** - Environment-based config for Redis (REDIS_HOST, REDIS_PORT)
-- **[config.toml](../config.toml)** - Blacklist configuration, cache TTL, nameservers, listen port
+- **[config.toml](../config.toml)** - Blacklist configuration, cache TTL, nameservers, listen port: the configuration file
 
 ### Data Flow
-1. Client requests `/ip/{ip}`, `/domain/{domain}`, or POST to `/ip/check` or `/domain/check`
+1. Client requests GET to `/ip/{ip}`, `/domain/{domain}`, or POST to `/ip/check` or `/domain/check`
 2. Handler checks Redis cache first (`getRedisKey`):
    - GET endpoints: use simple key (IP or domain)
    - POST endpoints: use composite key `post:ip:<ip>:<hash>` or `post:domain:<domain>:<hash>` where hash is SHA256 of sorted blacklist array
@@ -122,7 +125,7 @@ make test     # Runs go test -v
 - `127.0.0.1` and `127.255.255.255` are filtered as they're sometimes false positives
 - Always preserve other `127.x.x.x` responses - they're valid blacklist indicators
 
-### lidation:**
+### Validation:**
 - `validateBlacklists()` - Checks format, count limit, DNS name validity
 - `validateNameservers()` - Checks valid IP format, count limit
 - Both return `(valid bool, errorMsg string)` for HTTP 400 response (degrade gracefully)

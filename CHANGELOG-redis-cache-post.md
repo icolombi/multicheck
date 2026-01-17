@@ -1,9 +1,11 @@
 # Changelog - Redis Cache for POST Endpoints
 
 ## Date
+
 January 17, 2026
 
 ## Summary
+
 Implemented Redis caching for POST endpoints (`/ip/check` and `/domain/check`) to improve performance when checking custom blacklists. Cache keys are generated using a hash of the sorted blacklist array, ensuring consistent caching regardless of blacklist order or nameserver selection.
 
 ## Changes
@@ -11,6 +13,7 @@ Implemented Redis caching for POST endpoints (`/ip/check` and `/domain/check`) t
 ### Core Features
 
 #### Redis Caching for POST Endpoints
+
 - **POST /ip/check** now uses Redis cache with key format: `post:ip:<ip>:<hash>`
 - **POST /domain/check** now uses Redis cache with key format: `post:domain:<domain>:<hash>`
 - Hash is generated from SHA256 of sorted blacklist array (truncated to 16 characters)
@@ -18,6 +21,7 @@ Implemented Redis caching for POST endpoints (`/ip/check` and `/domain/check`) t
 - Response includes `Cached: true` when served from Redis
 
 #### Cache Key Strategy
+
 - **GET endpoints**: Simple keys (IP or domain as-is)
 - **POST endpoints**: Composite keys with hash to avoid collisions
 - **Cache independence**: Nameservers don't affect cache keys (DNS results should be consistent)
@@ -26,17 +30,21 @@ Implemented Redis caching for POST endpoints (`/ip/check` and `/domain/check`) t
 ### New Functions
 
 #### `generateBlacklistHash()` in functions.go
+
 ```go
 func generateBlacklistHash(blacklists []string) string
 ```
+
 - Sorts blacklist array for consistent ordering
 - Creates SHA256 hash of comma-separated sorted blacklists
 - Returns truncated 16-character hash for readability
 
 #### `buildPostCacheKey()` in functions.go
+
 ```go
 func buildPostCacheKey(keyType, identifier string, blacklists []string) string
 ```
+
 - Generates complete cache key for POST endpoints
 - Format: `post:ip:<ip>:<hash>` or `post:domain:<domain>:<hash>`
 - Uses `generateBlacklistHash()` internally
@@ -44,18 +52,21 @@ func buildPostCacheKey(keyType, identifier string, blacklists []string) string
 ### Modified Functions
 
 #### `PostCheckIp()` in main.go
+
 - Added cache lookup before DNS queries
 - Returns cached result when available
 - Saves result to cache after DNS check
 - Logs cache hit/miss status
 
 #### `PostCheckDomain()` in main.go
+
 - Added cache lookup before DNS queries
 - Returns cached result when available
 - Saves result to cache after DNS check
 - Logs cache hit/miss status
 
 ### Updated Imports
+
 - Added `crypto/sha256` and `encoding/hex` to main.go
 - Added `sort` to main.go for blacklist sorting
 - Added corresponding imports to functions.go
@@ -71,6 +82,7 @@ func buildPostCacheKey(keyType, identifier string, blacklists []string) string
 ## Examples
 
 ### Cache Hit Scenario
+
 ```bash
 # First request (cache miss)
 curl -X POST http://localhost:8080/ip/check \
@@ -84,6 +96,7 @@ curl -X POST http://localhost:8080/ip/check \
 ```
 
 ### Order Independence
+
 ```bash
 # Request 1
 curl -X POST http://localhost:8080/ip/check \
@@ -95,6 +108,7 @@ curl -X POST http://localhost:8080/ip/check \
 ```
 
 ### Nameserver Independence
+
 ```bash
 # Request 1 with nameserver A
 curl -X POST http://localhost:8080/ip/check \
@@ -108,6 +122,7 @@ curl -X POST http://localhost:8080/ip/check \
 ## Testing
 
 Existing tests continue to pass:
+
 - `TestPostCheckIP` - Verifies POST /ip/check functionality
 - `TestPostCheckDomain` - Verifies POST /domain/check functionality
 
