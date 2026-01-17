@@ -51,6 +51,11 @@ type Config struct {
 	RedisCacheTTL        int
 	MaxCustomBlacklists  int
 	MaxCustomNameservers int
+	MaxRequestBodySize   int64
+	MaxStringLength      int
+	DNSQueryTimeout      int
+	HTTPReadTimeout      int
+	HTTPWriteTimeout     int
 	nameServers          []string
 	listenPort           string
 }
@@ -198,7 +203,15 @@ func main() {
 		panic(err)
 	}
 	fmt.Println(string(u))
-	err = http.ListenAndServe(configuration.listenPort, r)
+
+	// Configure HTTP server with timeouts to prevent resource exhaustion
+	srv := &http.Server{
+		Addr:         configuration.listenPort,
+		Handler:      r,
+		ReadTimeout:  time.Duration(configuration.HTTPReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(configuration.HTTPWriteTimeout) * time.Second,
+	}
+	err = srv.ListenAndServe()
 
 	if err != nil {
 		startLog.Errors = append(startLog.Errors, err.Error())
@@ -307,8 +320,13 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	ip.BlackListed = false
 	ip.BlackList = nil
 	ipAddress := params["ip"]
-	// Se l'IP è valido, proseguo con le query DNS
-	if net.ParseIP(params["ip"]) != nil {
+
+	// Valida lunghezza IP
+	if len(ipAddress) > configuration.MaxStringLength {
+		ip.ValidIP = false
+		ip.Status = false
+		errors = append(errors, fmt.Sprintf("IP address too long (maximum %d characters)", configuration.MaxStringLength))
+	} else if net.ParseIP(params["ip"]) != nil {
 		ip.ValidIP = true
 		// Cerco in Redis se è in cache
 		value, err := getRedisKey(ipAddress)
@@ -339,8 +357,8 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		Status:      ip.Status,
 		Errors:      errors}
 	//fmt.Println(json.Marshal(ip))
-	// Se l'IP non è in cache creo la chiave in Redis
-	if !ip.Cached {
+	// Se l'IP non è in cache E l'IP è valido, salva in Redis
+	if !ip.Cached && ip.ValidIP {
 		value, _ := json.Marshal(ip)
 		valueStr := string(value)
 		err := setRedisKey(ipAddress, valueStr)
@@ -389,8 +407,13 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	domain.BlackListed = false
 	domain.BlackList = nil
 	domainName := params["domain"]
-	// Se il dominio è valido, proseguo con le query DNS
-	if validator.IsValidDomain(params["domain"]) {
+
+	// Valida lunghezza domain
+	if len(domainName) > configuration.MaxStringLength {
+		domain.ValidDomain = false
+		domain.Status = false
+		errors = append(errors, fmt.Sprintf("domain name too long (maximum %d characters)", configuration.MaxStringLength))
+	} else if validator.IsValidDomain(params["domain"]) {
 		domain.ValidDomain = true
 		// Cerco in Redis se è in cache
 		value, err := getRedisKey(domainName)
@@ -416,7 +439,8 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		Status:      domain.Status,
 		Errors:      errors}
 
-	if !domain.Cached {
+	// Se il dominio non è in cache E il dominio è valido, salva in Redis
+	if !domain.Cached && domain.ValidDomain {
 		value, _ := json.Marshal(domain)
 		valueStr := string(value)
 		err := setRedisKey(domainName, valueStr)
@@ -464,6 +488,9 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	ip.BlackListed = false
 	ip.BlackList = nil
 
+	// Limit request body size to prevent memory exhaustion attacks
+	r.Body = http.MaxBytesReader(w, r.Body, configuration.MaxRequestBodySize)
+
 	// Leggi il body per il logging
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -485,6 +512,19 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		ip.Status = false
 		errors = append(errors, "invalid JSON body: "+err.Error())
+		elapsed := time.Since(start).Seconds()
+		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ip)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	// Valida lunghezza IP
+	if len(req.IP) > configuration.MaxStringLength {
+		ip.ValidIP = false
+		ip.Status = false
+		errors = append(errors, fmt.Sprintf("IP address too long (maximum %d characters)", configuration.MaxStringLength))
 		elapsed := time.Since(start).Seconds()
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
@@ -609,6 +649,9 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	domain.BlackListed = false
 	domain.BlackList = nil
 
+	// Limit request body size to prevent memory exhaustion attacks
+	r.Body = http.MaxBytesReader(w, r.Body, configuration.MaxRequestBodySize)
+
 	// Leggi il body per il logging
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -630,6 +673,19 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		domain.Status = false
 		errors = append(errors, "invalid JSON body: "+err.Error())
+		elapsed := time.Since(start).Seconds()
+		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(domain)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	// Valida lunghezza domain
+	if len(req.Domain) > configuration.MaxStringLength {
+		domain.ValidDomain = false
+		domain.Status = false
+		errors = append(errors, fmt.Sprintf("domain name too long (maximum %d characters)", configuration.MaxStringLength))
 		elapsed := time.Since(start).Seconds()
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)

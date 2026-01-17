@@ -26,6 +26,16 @@ maxCustomBlacklists = 20 # Maximum number of custom blacklists allowed in POST r
 
 maxCustomNameservers = 3 # Maximum number of custom nameservers allowed in POST requests
 
+maxRequestBodySize = 1048576 # Maximum request body size in bytes (1MB)
+
+maxStringLength = 253 # Maximum length for domain names and blacklist entries (DNS standard)
+
+dnsQueryTimeout = 5 # DNS query timeout in seconds
+
+httpReadTimeout = 30 # HTTP read timeout in seconds
+
+httpWriteTimeout = 30 # HTTP write timeout in seconds
+
 nameServers = """
 100.100.100.100
 """

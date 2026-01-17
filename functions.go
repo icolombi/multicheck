@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/spf13/viper"
@@ -43,6 +44,11 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.RedisCacheTTL = viper.GetInt("redisCacheTTL")
 	configuration.MaxCustomBlacklists = viper.GetInt("maxCustomBlacklists")
 	configuration.MaxCustomNameservers = viper.GetInt("maxCustomNameservers")
+	configuration.MaxRequestBodySize = viper.GetInt64("maxRequestBodySize")
+	configuration.MaxStringLength = viper.GetInt("maxStringLength")
+	configuration.DNSQueryTimeout = viper.GetInt("dnsQueryTimeout")
+	configuration.HTTPReadTimeout = viper.GetInt("httpReadTimeout")
+	configuration.HTTPWriteTimeout = viper.GetInt("httpWriteTimeout")
 	configuration.nameServers = viper.GetStringSlice("nameServers")
 	configuration.listenPort = viper.GetString("listenPort")
 
@@ -122,6 +128,11 @@ func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorM
 		trimmed := strings.TrimSpace(bl)
 		if trimmed == "" {
 			return false, "blacklist entries cannot be empty or whitespace"
+		}
+
+		// Controllo lunghezza massima (standard DNS: 253 caratteri)
+		if len(trimmed) > configuration.MaxStringLength {
+			return false, fmt.Sprintf("blacklist name too long: '%s' (maximum %d characters)", trimmed, configuration.MaxStringLength)
 		}
 
 		// Validazione base del formato DNS
@@ -215,7 +226,12 @@ func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP 
 	//fmt.Println("Checking " + blacklist)
 	defer wg.Done()
 	var error string
-	value, err := resolverToUse.LookupIP(context.Background(), "ip4", reverseIP+"."+blacklist+".")
+
+	// Create context with timeout to prevent DNS queries from hanging
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(configuration.DNSQueryTimeout)*time.Second)
+	defer cancel()
+
+	value, err := resolverToUse.LookupIP(ctx, "ip4", reverseIP+"."+blacklist+".")
 	value = removeIPFromSlice(value)
 
 	if err != nil {
@@ -292,7 +308,12 @@ func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domain
 
 	// Debug tempo esecuzione query DNS
 	//start := time.Now()
-	value, err := resolverToUse.LookupIP(context.Background(), "ip4", domainName+"."+blacklist+".")
+
+	// Create context with timeout to prevent DNS queries from hanging
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(configuration.DNSQueryTimeout)*time.Second)
+	defer cancel()
+
+	value, err := resolverToUse.LookupIP(ctx, "ip4", domainName+"."+blacklist+".")
 	value = removeIPFromSlice(value)
 
 	if err != nil {
