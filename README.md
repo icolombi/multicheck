@@ -130,9 +130,16 @@ Checks an IP address against a custom list of blacklists, overriding the default
     "zen.spamhaus.org",
     "bl.spamcop.net",
     "cbl.abuseat.org"
-  ]
+  ],
+  "nameservers": ["8.8.8.8", "1.1.1.1"]
 }
 ```
+
+**Parameters:**
+
+- `ip` (required): IP address to check
+- `blacklists` (required): Array of DNS blacklist domains to query
+- `nameservers` (optional): Array of custom DNS nameservers to use (default: uses config.toml nameservers)
 
 **Response:**
 
@@ -159,6 +166,10 @@ Checks an IP address against a custom list of blacklists, overriding the default
   - No invalid DNS characters allowed
   - Cannot start/end with `.` or `-`
   - No consecutive dots allowed
+- `nameservers` (optional): Array of custom DNS nameservers
+  - Must be valid IP addresses
+  - Maximum 3 nameservers (configurable via `maxCustomNameservers` in config.toml)
+  - If omitted, uses nameservers from config.toml
 
 **Error Responses:**
 
@@ -184,15 +195,33 @@ Checks an IP address against a custom list of blacklists, overriding the default
 }
 ```
 
+```json
+{
+  "IP": "1.2.3.4",
+  "ValidIP": true,
+  "Status": false,
+  "Errors": ["invalid nameserver: 'notanip' is not a valid IP address"],
+  "TimeTaken": 0.001,
+  "Cached": false
+}
+```
+
 ### Custom Blacklist Check - Domain (POST)
 
 ```bash
 POST /domain/check
 Content-Type: application/json
 ```
+,
+  "nameservers": ["8.8.8.8", "1.1.1.1"]
+}
+```
 
-Checks a domain against a custom list of blacklists, overriding the default configuration.
+**Parameters:**
 
+- `domain` (required): Domain to check
+- `blacklists` (required): Array of DNS blacklist domains to query
+- `nameservers` (optional): Array of custom DNS nameservers to use (default: uses config.toml nameservers)
 **Request Body:**
 
 ```json
@@ -217,6 +246,7 @@ Checks a domain against a custom list of blacklists, overriding the default conf
   "Errors": [],
   "TimeTaken": 0.245,
   "Cached": false
+- `nameservers`: Same validation rules as IP check endpoint
 }
 ```
 
@@ -265,6 +295,7 @@ Checks the service status, Redis connectivity, and uptime.
   "Redis": true,
   "RedisConnections": 1,
   "Uptime": 3600000000000,
+  "Version": "1.0.0",
   "GoVersion": "go1.25.5"
 }
 ```
@@ -309,6 +340,9 @@ redisCacheTTL = 300
 
 # Maximum custom blacklists allowed in POST requests
 maxCustomBlacklists = 20
+
+# Maximum custom nameservers allowed in POST requests
+maxCustomNameservers = 3
 
 # DNS nameservers to use
 nameServers = """

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"runtime"
@@ -38,6 +39,7 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.CacheControlMaxAge = viper.GetInt("cacheControlMaxAge")
 	configuration.RedisCacheTTL = viper.GetInt("redisCacheTTL")
 	configuration.MaxCustomBlacklists = viper.GetInt("maxCustomBlacklists")
+	configuration.MaxCustomNameservers = viper.GetInt("maxCustomNameservers")
 	configuration.nameServers = viper.GetStringSlice("nameServers")
 	configuration.listenPort = viper.GetString("listenPort")
 
@@ -68,6 +70,35 @@ func removeIPFromSlice(slice []net.IP) []net.IP {
 		}
 	}
 	return result
+}
+
+// Valida una lista di nameserver (devono essere IP validi)
+func validateNameservers(nameservers []string, maxAllowed int) (valid bool, errorMsg string) {
+	// Se la lista è vuota, è valida (useremo i default)
+	if len(nameservers) == 0 {
+		return true, ""
+	}
+
+	// Controllo limite massimo
+	if len(nameservers) > maxAllowed {
+		return false, fmt.Sprintf("too many nameservers: maximum %d allowed, received %d", maxAllowed, len(nameservers))
+	}
+
+	// Validazione che ogni nameserver sia un IP valido
+	for _, ns := range nameservers {
+		// Controllo che non sia vuoto o solo spazi
+		trimmed := strings.TrimSpace(ns)
+		if trimmed == "" {
+			return false, "nameserver entries cannot be empty or whitespace"
+		}
+
+		// Validazione IP
+		if net.ParseIP(trimmed) == nil {
+			return false, fmt.Sprintf("invalid nameserver: '%s' is not a valid IP address", trimmed)
+		}
+	}
+
+	return true, ""
 }
 
 // Valida una lista di blacklist per sintassi DNS e limiti
@@ -122,13 +153,35 @@ func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorM
 	return true, ""
 }
 
+// Crea un resolver custom con i nameserver specificati
+func createCustomResolver(nameservers []string) *net.Resolver {
+	return &net.Resolver{
+		PreferGo:     true,
+		StrictErrors: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{}
+			// Prendo un name server a caso
+			randomIndex := rand.Intn(len(nameservers))
+			nameserver := nameservers[randomIndex]
+			return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
+		},
+	}
+}
+
 // Passando un IP restituisce la sua presenza in un elenco di blacklist
 func checkBlacklistIP(ipAddress string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
-	return checkBlacklistIPWithCustomList(ipAddress, configuration.ipBlacklist)
+	return checkBlacklistIPWithCustomList(ipAddress, configuration.ipBlacklist, nil)
 }
 
 // Passando un IP e una lista custom di blacklist restituisce la sua presenza
-func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+// Se customResolver è nil, usa il resolver globale
+func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string, customResolver *net.Resolver) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+
+	// Se non è specificato un resolver custom, usa quello globale
+	resolverToUse := resolver
+	if customResolver != nil {
+		resolverToUse = customResolver
+	}
 
 	max := len(blackLists)
 	reverseIP := reverseIP(ipAddress)
@@ -140,7 +193,7 @@ func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string) (blac
 	errorCh := make(chan string, max)
 	wg.Add(max)
 	for _, blacklist := range blackLists {
-		go checkIPDNS(&wg, &mu, blacklist, reverseIP, blacklistsActive, errorCh, &blacklisted)
+		go checkIPDNS(&wg, &mu, blacklist, reverseIP, blacklistsActive, errorCh, &blacklisted, resolverToUse)
 
 	}
 
@@ -155,11 +208,11 @@ func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string) (blac
 }
 
 // Funzione per le query DNS sull'IP
-func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
+func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool, resolverToUse *net.Resolver) {
 	//fmt.Println("Checking " + blacklist)
 	defer wg.Done()
 	var error string
-	value, err := resolver.LookupIP(context.Background(), "ip4", reverseIP+"."+blacklist+".")
+	value, err := resolverToUse.LookupIP(context.Background(), "ip4", reverseIP+"."+blacklist+".")
 	value = removeIPFromSlice(value)
 
 	if err != nil {
@@ -192,11 +245,18 @@ func reverseIP(ipAddress string) string {
 
 // Passando un dominio restituisce la sua presenza in un elenco di blacklist
 func checkBlacklistDomain(domainName string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
-	return checkBlacklistDomainWithCustomList(domainName, configuration.domainBlacklist)
+	return checkBlacklistDomainWithCustomList(domainName, configuration.domainBlacklist, nil)
 }
 
 // Passando un dominio e una lista custom di blacklist restituisce la sua presenza
-func checkBlacklistDomainWithCustomList(domainName string, blackLists []string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+// Se customResolver è nil, usa il resolver globale
+func checkBlacklistDomainWithCustomList(domainName string, blackLists []string, customResolver *net.Resolver) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
+
+	// Se non è specificato un resolver custom, usa quello globale
+	resolverToUse := resolver
+	if customResolver != nil {
+		resolverToUse = customResolver
+	}
 
 	max := len(blackLists)
 	blacklistsActive = make(map[string][]net.IP)
@@ -207,7 +267,7 @@ func checkBlacklistDomainWithCustomList(domainName string, blackLists []string) 
 	errorCh := make(chan string, max)
 	wg.Add(max)
 	for _, blacklist := range blackLists {
-		go checkDomainDNS(&wg, &mu, blacklist, domainName, blacklistsActive, errorCh, &blacklisted)
+		go checkDomainDNS(&wg, &mu, blacklist, domainName, blacklistsActive, errorCh, &blacklisted, resolverToUse)
 	}
 
 	error := <-errorCh
@@ -221,7 +281,7 @@ func checkBlacklistDomainWithCustomList(domainName string, blackLists []string) 
 }
 
 // Funzione per le query DNS sul dominio
-func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domainName string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool) {
+func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domainName string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool, resolverToUse *net.Resolver) {
 	defer wg.Done() // Decrease the WaitGroup counter by 1
 	var error string
 
@@ -229,7 +289,7 @@ func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domain
 
 	// Debug tempo esecuzione query DNS
 	//start := time.Now()
-	value, err := resolver.LookupIP(context.Background(), "ip4", domainName+"."+blacklist+".")
+	value, err := resolverToUse.LookupIP(context.Background(), "ip4", domainName+"."+blacklist+".")
 	value = removeIPFromSlice(value)
 
 	if err != nil {

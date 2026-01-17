@@ -24,6 +24,8 @@ redisCacheTTL = 300 # Seconds
 
 maxCustomBlacklists = 20 # Maximum number of custom blacklists allowed in POST requests
 
+maxCustomNameservers = 3 # Maximum number of custom nameservers allowed in POST requests
+
 nameServers = """
 100.100.100.100
 """

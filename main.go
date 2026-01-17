@@ -45,13 +45,14 @@ type Log struct {
 
 // Struttura per contenere le configurazioni
 type Config struct {
-	domainBlacklist     []string
-	ipBlacklist         []string
-	CacheControlMaxAge  int
-	RedisCacheTTL       int
-	MaxCustomBlacklists int
-	nameServers         []string
-	listenPort          string
+	domainBlacklist      []string
+	ipBlacklist          []string
+	CacheControlMaxAge   int
+	RedisCacheTTL        int
+	MaxCustomBlacklists  int
+	MaxCustomNameservers int
+	nameServers          []string
+	listenPort           string
 }
 
 // Struct per rappresentare la risposta di un oggetto di tipo IP
@@ -68,8 +69,9 @@ type Ip struct {
 
 // Struct per il body della richiesta POST /ip/check
 type CheckIpRequest struct {
-	IP         string   `json:"ip"`
-	Blacklists []string `json:"blacklists"`
+	IP          string   `json:"ip"`
+	Blacklists  []string `json:"blacklists"`
+	Nameservers []string `json:"nameservers,omitempty"`
 }
 
 // Struct per rappresentare la risposta un oggetto di tipo Domain
@@ -86,8 +88,9 @@ type Domain struct {
 
 // Struct per il body della richiesta POST /domain/check
 type CheckDomainRequest struct {
-	Domain     string   `json:"domain"`
-	Blacklists []string `json:"blacklists"`
+	Domain      string   `json:"domain"`
+	Blacklists  []string `json:"blacklists"`
+	Nameservers []string `json:"nameservers,omitempty"`
 }
 
 // Struct per rappresentare la risposta di un oggetto DelCache
@@ -517,8 +520,27 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Valida i nameserver se forniti
+	valid, errorMsg = validateNameservers(req.Nameservers, configuration.MaxCustomNameservers)
+	if !valid {
+		ip.Status = false
+		errors = append(errors, errorMsg)
+		elapsed := time.Since(start).Seconds()
+		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: true, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ip)
+		logRequest("POST", "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	// Crea resolver custom se sono forniti nameserver, altrimenti usa nil (userà quello globale)
+	var customResolver *net.Resolver
+	if len(req.Nameservers) > 0 {
+		customResolver = createCustomResolver(req.Nameservers)
+	}
+
 	// Controlla le blacklist personalizzate
-	ip.BlackListed, ip.BlackList, errors = checkBlacklistIPWithCustomList(req.IP, req.Blacklists)
+	ip.BlackListed, ip.BlackList, errors = checkBlacklistIPWithCustomList(req.IP, req.Blacklists, customResolver)
 
 	elapsed := time.Since(start).Seconds()
 	ip = Ip{
@@ -619,8 +641,27 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Valida i nameserver se forniti
+	valid, errorMsg = validateNameservers(req.Nameservers, configuration.MaxCustomNameservers)
+	if !valid {
+		domain.Status = false
+		errors = append(errors, errorMsg)
+		elapsed := time.Since(start).Seconds()
+		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: true, Status: false, Errors: errors}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(domain)
+		logRequest("POST", "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	// Crea resolver custom se sono forniti nameserver, altrimenti usa nil (userà quello globale)
+	var customResolver *net.Resolver
+	if len(req.Nameservers) > 0 {
+		customResolver = createCustomResolver(req.Nameservers)
+	}
+
 	// Controlla le blacklist personalizzate
-	domain.BlackListed, domain.BlackList, errors = checkBlacklistDomainWithCustomList(req.Domain, req.Blacklists)
+	domain.BlackListed, domain.BlackList, errors = checkBlacklistDomainWithCustomList(req.Domain, req.Blacklists, customResolver)
 
 	elapsed := time.Since(start).Seconds()
 	domain = Domain{
