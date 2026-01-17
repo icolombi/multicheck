@@ -212,6 +212,8 @@ Checks an IP address against a custom list of blacklists, overriding the default
 POST /domain/check
 Content-Type: application/json
 ```
+
+```json
 ,
   "nameservers": ["8.8.8.8", "1.1.1.1"]
 }
@@ -295,7 +297,6 @@ Checks the service status, Redis connectivity, and uptime.
   "Redis": true,
   "RedisConnections": 1,
   "Uptime": 3600000000000,
-  "Version": "1.0.0",
   "GoVersion": "go1.25.5"
 }
 ```
@@ -340,9 +341,6 @@ redisCacheTTL = 300
 
 # Maximum custom blacklists allowed in POST requests
 maxCustomBlacklists = 20
-
-# Maximum custom nameservers allowed in POST requests
-maxCustomNameservers = 3
 
 # DNS nameservers to use
 nameServers = """
