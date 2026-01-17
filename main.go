@@ -105,6 +105,7 @@ type Health struct {
 	RedisConnections int
 	Uptime           time.Duration
 	GoVersion        string
+	Version          string
 }
 
 // Struct per l'oggetto di root (Help, pagina principale)
@@ -134,6 +135,9 @@ var nameservers []string
 
 var uptime time.Duration
 var startTime = time.Now()
+
+// version può essere impostata durante la build con -ldflags "-X main.version=x.y.z"
+var version = "1.0.0"
 
 func main() {
 	// Momento di avvio, usato per calcolare l'uptime
@@ -261,7 +265,7 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	uptime = time.Duration(time.Since(startTime).Seconds())
 	health.Alive = true
-	health = Health{Alive: health.Alive, Redis: health.Redis, RedisConnections: health.RedisConnections, Uptime: uptime, GoVersion: runtime.Version()}
+	health = Health{Alive: health.Alive, Redis: health.Redis, RedisConnections: health.RedisConnections, Uptime: uptime, GoVersion: runtime.Version(), Version: version}
 	json.NewEncoder(w).Encode(health)
 	// Log
 

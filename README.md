@@ -442,7 +442,7 @@ Contributions, issues, and feature requests are welcome!
 ## Support the project ❤️
 
 If this project is useful to you, you can buy me a coffee ☕  
-👉 https://paypal.me/IgorColombi
+👉 <https://paypal.me/IgorColombi>
 
 ## 📄 License
 
