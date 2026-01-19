@@ -51,6 +51,10 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.HTTPWriteTimeout = viper.GetInt("httpWriteTimeout")
 	configuration.nameServers = viper.GetStringSlice("nameServers")
 	configuration.listenPort = viper.GetString("listenPort")
+	configuration.RedisHost = viper.GetString("redisHost")
+	configuration.RedisPort = viper.GetInt("redisPort")
+	configuration.RedisDatabase = viper.GetInt("redisDatabase")
+	configuration.RedisPassword = viper.GetString("redisPassword")
 
 	return configuration
 }

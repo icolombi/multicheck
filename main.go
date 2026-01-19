@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dchest/validator"
+	"github.com/gomodule/redigo/redis"
 	"github.com/gorilla/mux"
 )
 
@@ -59,6 +60,10 @@ type Config struct {
 	HTTPWriteTimeout     int
 	nameServers          []string
 	listenPort           string
+	RedisHost            string
+	RedisPort            int
+	RedisDatabase        int
+	RedisPassword        string
 }
 
 // Struct per rappresentare la risposta di un oggetto di tipo IP
@@ -136,7 +141,7 @@ var configuration Config
 // Variabile per contenere le informazioni sugli endpoints
 var endpoints Root
 
-var c = redisConnect()
+var c *redis.Pool
 
 var resolver *net.Resolver
 
@@ -152,6 +157,9 @@ func main() {
 	// Momento di avvio, usato per calcolare l'uptime
 
 	configuration = ReadConfig(configuration)
+
+	// Inizializza la connessione Redis dopo aver caricato la configurazione
+	c = redisConnect()
 
 	// Inizializza il router
 	r := mux.NewRouter()

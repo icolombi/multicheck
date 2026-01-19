@@ -37,7 +37,12 @@ httpReadTimeout = 30 # HTTP read timeout in seconds
 httpWriteTimeout = 30 # HTTP write timeout in seconds
 
 nameServers = """
-192.168.179.39
-"""
+192.168.179.39"""
 
 listenPort = ":8080"
+
+# Redis configuration
+redisHost = "127.0.0.1"
+redisPort = 6379
+redisDatabase = 0
+redisPassword = "" # Leave empty if no password is required

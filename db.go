@@ -2,15 +2,12 @@ package main
 
 import (
 	"fmt"
-	"multicheck/credentialstore"
 
 	"github.com/gomodule/redigo/redis"
 )
 
 func redisConnect() *redis.Pool {
-	// var redisPassword string = credentialstore.RedisPassword
-	var redisDatabase int = credentialstore.RedisDatabase
-	connString := fmt.Sprintf("%s:%d", credentialstore.RedisHost, credentialstore.RedisPort)
+	connString := fmt.Sprintf("%s:%d", configuration.RedisHost, configuration.RedisPort)
 	return &redis.Pool{
 		MaxIdle:   1,
 		MaxActive: 8, // max number of connections
@@ -20,11 +17,15 @@ func redisConnect() *redis.Pool {
 				//panic(err.Error())
 				return c, err
 			}
-			// if _, err := c.Do("AUTH", redisPassword); err != nil {
-			// 	c.Close()
-			// 	return nil, err
-			// }
-			if _, err := c.Do("SELECT", redisDatabase); err != nil {
+			// Autenticazione se è presente una password
+			if configuration.RedisPassword != "" {
+				if _, err := c.Do("AUTH", configuration.RedisPassword); err != nil {
+					c.Close()
+					return nil, err
+				}
+			}
+			// Selezione del database
+			if _, err := c.Do("SELECT", configuration.RedisDatabase); err != nil {
 				c.Close()
 				return nil, err
 			}

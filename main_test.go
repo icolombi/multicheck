@@ -14,7 +14,31 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// setupTestWithResolver inizializza la configurazione, il pool Redis e il resolver per i test
+func setupTestWithResolver() {
+	if configuration.listenPort == "" {
+		configuration = ReadConfig(configuration)
+		c = redisConnect()
+
+		// Inizializza il resolver
+		nameservers = configuration.nameServers
+		if len(nameservers) > 0 {
+			resolver = &net.Resolver{
+				PreferGo:     true,
+				StrictErrors: true,
+				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					d := net.Dialer{}
+					randomIndex := rand.Intn(len(nameservers))
+					nameserver := nameservers[randomIndex]
+					return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
+				},
+			}
+		}
+	}
+}
+
 func TestHealthCheckHandler(t *testing.T) {
+	setupTestWithResolver()
 
 	// Struct per contenere la risposta
 	type Message struct {
@@ -59,25 +83,11 @@ func TestHealthCheckHandler(t *testing.T) {
 }
 
 func TestDomainBlacklist(t *testing.T) {
-	// Inizializza la configurazione
-	configuration = ReadConfig(configuration)
+	// Inizializza la configurazione, Redis e resolver
+	setupTestWithResolver()
 
-	// Inizializza il resolver
-	nameservers = configuration.nameServers
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
-	}
-
-	resolver = &net.Resolver{
-		PreferGo:     true,
-		StrictErrors: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{}
-			// Prendo un name server a caso dalla configurazione
-			randomIndex := rand.Intn(len(nameservers))
-			nameserver := nameservers[randomIndex]
-			return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-		},
 	}
 
 	// Crea il router con il handler
@@ -146,25 +156,11 @@ func TestDomainBlacklist(t *testing.T) {
 }
 
 func TestIPBlacklist(t *testing.T) {
-	// Inizializza la configurazione
-	configuration = ReadConfig(configuration)
+	// Inizializza la configurazione, Redis e resolver
+	setupTestWithResolver()
 
-	// Inizializza il resolver
-	nameservers = configuration.nameServers
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
-	}
-
-	resolver = &net.Resolver{
-		PreferGo:     true,
-		StrictErrors: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{}
-			// Prendo un name server a caso dalla configurazione
-			randomIndex := rand.Intn(len(nameservers))
-			nameserver := nameservers[randomIndex]
-			return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-		},
 	}
 
 	// Crea il router con il handler
@@ -233,25 +229,11 @@ func TestIPBlacklist(t *testing.T) {
 }
 
 func TestPostCheckDomain(t *testing.T) {
-	// Inizializza la configurazione
-	configuration = ReadConfig(configuration)
+	// Inizializza la configurazione, Redis e resolver
+	setupTestWithResolver()
 
-	// Inizializza il resolver
-	nameservers = configuration.nameServers
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
-	}
-
-	resolver = &net.Resolver{
-		PreferGo:     true,
-		StrictErrors: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{}
-			// Prendo un name server a caso dalla configurazione
-			randomIndex := rand.Intn(len(nameservers))
-			nameserver := nameservers[randomIndex]
-			return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-		},
 	}
 
 	// Crea il router con il handler
@@ -331,25 +313,11 @@ func TestPostCheckDomain(t *testing.T) {
 }
 
 func TestPostCheckIP(t *testing.T) {
-	// Inizializza la configurazione
-	configuration = ReadConfig(configuration)
+	// Inizializza la configurazione, Redis e resolver
+	setupTestWithResolver()
 
-	// Inizializza il resolver
-	nameservers = configuration.nameServers
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
-	}
-
-	resolver = &net.Resolver{
-		PreferGo:     true,
-		StrictErrors: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{}
-			// Prendo un name server a caso dalla configurazione
-			randomIndex := rand.Intn(len(nameservers))
-			nameserver := nameservers[randomIndex]
-			return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-		},
 	}
 
 	// Crea il router con il handler
