@@ -167,8 +167,8 @@ func TestIPBlacklist(t *testing.T) {
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
 
-	// Create request for 2.0.0.127
-	req, err := http.NewRequest("GET", "/ip/2.0.0.127", nil)
+	// Create request for 127.0.0.2
+	req, err := http.NewRequest("GET", "/ip/127.0.0.2", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,17 +199,17 @@ func TestIPBlacklist(t *testing.T) {
 
 	// Verify IP is blacklisted
 	if !response.BlackListed {
-		t.Errorf("Expected 2.0.0.127 to be blacklisted, but it was not detected as blacklisted")
+		t.Errorf("Expected 127.0.0.2 to be blacklisted, but it was not detected as blacklisted")
 	}
 
 	// Verify zen.spamhaus.org is in the blacklist list
 	blacklistIPs, found := response.BlackList["zen.spamhaus.org"]
 	if !found {
-		t.Errorf("Expected 2.0.0.127 to be blacklisted by zen.spamhaus.org, but it was not found in BlackList map")
+		t.Errorf("Expected 127.0.0.2 to be blacklisted by zen.spamhaus.org, but it was not found in BlackList map")
 		t.Logf("BlackList content: %+v", response.BlackList)
 	} else {
-		// Verify response code is 127.0.0.11
-		expectedIP := net.ParseIP("127.0.0.11")
+		// Verify response code is 127.0.0.2
+		expectedIP := net.ParseIP("127.0.0.2")
 		found := false
 		for _, ip := range blacklistIPs {
 			if ip.Equal(expectedIP) {
@@ -218,7 +218,7 @@ func TestIPBlacklist(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("Expected IP 127.0.0.11 from zen.spamhaus.org, got %v", blacklistIPs)
+			t.Errorf("Expected IP 127.0.0.2 from zen.spamhaus.org, got %v", blacklistIPs)
 		}
 	}
 
