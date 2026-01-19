@@ -536,3 +536,475 @@ func TestPostCheckIP(t *testing.T) {
 		t.Logf("Errors reported: %v", response.Errors)
 	}
 }
+
+// Test to verify that GET / returns the endpoint list
+func TestRootHandler(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/", RootHandler).Methods("GET")
+	req, _ := http.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %v", rr.Code)
+	}
+
+	var response Root
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	// Check that endpoints list is not empty
+	if len(response.EndPoints) == 0 {
+		t.Errorf("Expected EndPoints to be populated, got empty list")
+	}
+
+	// Check that configuration is present
+	if len(response.IpBlacklist) == 0 {
+		t.Errorf("Expected IpBlacklist to be populated, got empty list")
+	}
+}
+
+// Test to verify that GET /clear-cache/{key} works
+func TestClearCache(t *testing.T) {
+	setupTestWithResolver()
+
+	// First, create a cache entry by requesting an IP
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+
+	testIP := "8.8.8.8"
+
+	// First request to populate cache
+	req1, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	// Now clear the cache
+	req2, _ := http.NewRequest("GET", "/clear-cache/"+testIP, nil)
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %v", rr2.Code)
+	}
+
+	var response ClearCache
+	err := json.NewDecoder(rr2.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if !response.Status {
+		t.Errorf("Expected Status to be true, got false. Errors: %v", response.Errors)
+	}
+
+	if response.Key != testIP {
+		t.Errorf("Expected Key to be %s, got %s", testIP, response.Key)
+	}
+}
+
+// Test to verify that a clean IP is not blacklisted
+func TestGetIpNotBlacklisted(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
+
+	// 8.8.8.8 should not be blacklisted
+	req, _ := http.NewRequest("GET", "/ip/8.8.8.8", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %v", rr.Code)
+	}
+
+	var response Ip
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if !response.ValidIP {
+		t.Errorf("Expected ValidIP to be true, got false")
+	}
+
+	if response.BlackListed {
+		t.Errorf("Expected 8.8.8.8 to NOT be blacklisted, but it was detected as blacklisted")
+	}
+
+	if len(response.BlackList) > 0 {
+		t.Errorf("Expected BlackList to be empty, got %v", response.BlackList)
+	}
+}
+
+// Test to verify that a clean domain is not blacklisted
+func TestGetDomainNotBlacklisted(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
+
+	// uribl.com should not be blacklisted
+	req, _ := http.NewRequest("GET", "/domain/uribl.com", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %v", rr.Code)
+	}
+
+	var response Domain
+	err := json.NewDecoder(rr.Body).Decode(&response)
+	if err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if !response.ValidDomain {
+		t.Errorf("Expected ValidDomain to be true, got false")
+	}
+
+	if response.BlackListed {
+		t.Errorf("Expected google.com to NOT be blacklisted, but it was detected as blacklisted")
+	}
+
+	if len(response.BlackList) > 0 {
+		t.Errorf("Expected BlackList to be empty, got %v", response.BlackList)
+	}
+}
+
+// Test to verify cache hit on second IP request
+func TestGetIpCacheHit(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
+
+	testIP := "1.1.1.1"
+
+	// First request - should not be cached
+	req1, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	var response1 Ip
+	json.NewDecoder(rr1.Body).Decode(&response1)
+
+	if response1.Cached {
+		t.Logf("Warning: First request was cached (unexpected, but possible if previous test left data)")
+	}
+
+	// Second request - should be cached
+	req2, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	var response2 Ip
+	json.NewDecoder(rr2.Body).Decode(&response2)
+
+	if !response2.Cached {
+		t.Errorf("Expected second request to be cached (Cached=true), got Cached=false")
+	}
+}
+
+// Test to verify cache hit on second domain request
+func TestGetDomainCacheHit(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
+
+	testDomain := "example.com"
+
+	// First request - should not be cached
+	req1, _ := http.NewRequest("GET", "/domain/"+testDomain, nil)
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	var response1 Domain
+	json.NewDecoder(rr1.Body).Decode(&response1)
+
+	if response1.Cached {
+		t.Logf("Warning: First request was cached (unexpected, but possible if previous test left data)")
+	}
+
+	// Second request - should be cached
+	req2, _ := http.NewRequest("GET", "/domain/"+testDomain, nil)
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	var response2 Domain
+	json.NewDecoder(rr2.Body).Decode(&response2)
+
+	if !response2.Cached {
+		t.Errorf("Expected second request to be cached (Cached=true), got Cached=false")
+	}
+}
+
+// Test to verify that GET /ip returns 400 with IP too long
+func TestGetIpTooLong(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
+
+	// Create a string longer than maxStringLength (253 characters)
+	longIP := ""
+	for i := 0; i < 260; i++ {
+		longIP += "1"
+	}
+
+	req, _ := http.NewRequest("GET", "/ip/"+longIP, nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %v", rr.Code)
+	}
+
+	var response Ip
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	if response.Status {
+		t.Errorf("Expected Status to be false, got true")
+	}
+
+	if len(response.Errors) == 0 {
+		t.Errorf("Expected error message about length, got no errors")
+	}
+}
+
+// Test to verify that GET /domain returns 400 with domain too long
+func TestGetDomainTooLong(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
+
+	// Create a string longer than maxStringLength (253 characters)
+	longDomain := ""
+	for i := 0; i < 260; i++ {
+		longDomain += "a"
+	}
+	longDomain += ".com"
+
+	req, _ := http.NewRequest("GET", "/domain/"+longDomain, nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %v", rr.Code)
+	}
+
+	var response Domain
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	if response.Status {
+		t.Errorf("Expected Status to be false, got true")
+	}
+
+	if len(response.Errors) == 0 {
+		t.Errorf("Expected error message about length, got no errors")
+	}
+}
+
+// Test to verify that POST /ip/check returns 400 with too many nameservers
+func TestPostCheckIpTooManyNameservers(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
+
+	// Create more nameservers than allowed
+	ns := make([]string, configuration.MaxCustomNameservers+1)
+	for i := range ns {
+		ns[i] = fmt.Sprintf("8.8.%d.%d", i/256, i%256)
+	}
+
+	body := CheckIpRequest{IP: "8.8.8.8", Blacklists: []string{"zen.spamhaus.org"}, Nameservers: ns}
+	bodyBytes, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %v", rr.Code)
+	}
+}
+
+// Test to verify that POST /domain/check returns 400 with too many nameservers
+func TestPostCheckDomainTooManyNameservers(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
+
+	// Create more nameservers than allowed
+	ns := make([]string, configuration.MaxCustomNameservers+1)
+	for i := range ns {
+		ns[i] = fmt.Sprintf("8.8.%d.%d", i/256, i%256)
+	}
+
+	body := CheckDomainRequest{Domain: "example.com", Blacklists: []string{"multi.uribl.com"}, Nameservers: ns}
+	bodyBytes, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/domain/check", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %v", rr.Code)
+	}
+}
+
+// Test to verify that POST /domain/check returns 400 with too many blacklists
+func TestPostCheckDomainTooManyBlacklists(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
+
+	bl := make([]string, configuration.MaxCustomBlacklists+1)
+	for i := range bl {
+		bl[i] = fmt.Sprintf("bl%d.org", i)
+	}
+	body := CheckDomainRequest{Domain: "example.com", Blacklists: bl}
+	bodyBytes, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/domain/check", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %v", rr.Code)
+	}
+}
+
+// Test to verify that POST /ip/check works with custom nameservers
+func TestPostCheckIpWithCustomNameservers(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
+
+	// Use a valid custom nameserver (Google DNS)
+	body := CheckIpRequest{
+		IP:          "2.0.0.127",
+		Blacklists:  []string{"zen.spamhaus.org"},
+		Nameservers: []string{"8.8.8.8"},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %v", rr.Code)
+	}
+
+	var response Ip
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	if !response.ValidIP {
+		t.Errorf("Expected ValidIP to be true, got false")
+	}
+
+	if !response.Status {
+		t.Errorf("Expected Status to be true, got false. Errors: %v", response.Errors)
+	}
+}
+
+// Test to verify that POST /domain/check works with custom nameservers
+func TestPostCheckDomainWithCustomNameservers(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
+
+	// Use a valid custom nameserver (Google DNS)
+	body := CheckDomainRequest{
+		Domain:      "test.uribl.com",
+		Blacklists:  []string{"multi.uribl.com"},
+		Nameservers: []string{"8.8.8.8"},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/domain/check", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %v", rr.Code)
+	}
+
+	var response Domain
+	json.NewDecoder(rr.Body).Decode(&response)
+
+	if !response.ValidDomain {
+		t.Errorf("Expected ValidDomain to be true, got false")
+	}
+
+	if !response.Status {
+		t.Errorf("Expected Status to be true, got false. Errors: %v", response.Errors)
+	}
+}
+
+// Test to verify that POST /ip/check returns 400 with invalid JSON
+func TestPostCheckIpInvalidJSON(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
+
+	invalidJSON := []byte(`{"ip": "8.8.8.8", "blacklists": [`)
+	req, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(invalidJSON))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %v", rr.Code)
+	}
+}
+
+// Test to verify that POST /domain/check returns 400 with invalid nameservers
+func TestPostCheckDomainInvalidNameservers(t *testing.T) {
+	setupTestWithResolver()
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
+
+	body := CheckDomainRequest{Domain: "example.com", Blacklists: []string{"multi.uribl.com"}, Nameservers: []string{"invalid"}}
+	bodyBytes, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "/domain/check", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %v", rr.Code)
+	}
+}
