@@ -19,20 +19,20 @@ func setupTestWithResolver() {
 	if configuration.listenPort == "" {
 		configuration = ReadConfig(configuration)
 		c = redisConnect()
+	}
 
-		// Inizializza il resolver
-		nameservers = configuration.nameServers
-		if len(nameservers) > 0 {
-			resolver = &net.Resolver{
-				PreferGo:     true,
-				StrictErrors: true,
-				Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					d := net.Dialer{}
-					randomIndex := rand.Intn(len(nameservers))
-					nameserver := nameservers[randomIndex]
-					return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-				},
-			}
+	// Inizializza sempre il resolver e nameservers (anche se già configurato prima)
+	nameservers = configuration.nameServers
+	if len(nameservers) > 0 {
+		resolver = &net.Resolver{
+			PreferGo:     true,
+			StrictErrors: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{}
+				randomIndex := rand.Intn(len(nameservers))
+				nameserver := nameservers[randomIndex]
+				return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
+			},
 		}
 	}
 }
