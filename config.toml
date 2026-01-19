@@ -37,7 +37,7 @@ httpReadTimeout = 30 # HTTP read timeout in seconds
 httpWriteTimeout = 30 # HTTP write timeout in seconds
 
 nameServers = """
-100.100.100.100
+192.168.179.39
 """
 
 listenPort = ":8080"
