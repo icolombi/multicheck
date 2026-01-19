@@ -444,9 +444,29 @@ make run | jq
 
 ## 🧪 Testing
 
+Multicheck provides two test output formats:
+
+### Verbose output with colors and icons
+
 ```bash
 make test
 ```
+
+This command runs all tests with detailed output including:
+
+- 🔵 **▶** Running test indicator
+- ✅ **✓** Green checkmark for passed tests
+- ❌ **✗** Red cross for failed tests
+- Color-coded summary (green for PASS, red for FAIL)
+- Full JSON logs for debugging
+
+### Minimal output (summary only)
+
+```bash
+make test-quiet
+```
+
+This command shows only test names and results without verbose JSON logs, perfect for quick checks.
 
 Tests verify the correct functioning of endpoints and connectivity with Redis.
 

@@ -98,8 +98,19 @@ Every request logs to stdout in JSON format with: `CurrentTime`, `Method`, `Para
 ```bash
 make build    # Compiles to bin/multicheck with stripped binary
 make run      # Runs binary piping output through jq
-make test     # Runs go test -v
-```contains comprehensive tests:
+make test     # Runs go test with colored output and icons (verbose)
+make test-quiet # Runs tests with summary only (minimal output, no JSON logs)
+```
+
+### Test Output
+Tests now include visual enhancements for better readability:
+- **Icons**: ▶ (running), ✓ (pass), ✗ (fail)
+- **Colors**: Blue for running, green for pass, red for fail
+- **Two modes**:
+  - `make test`: Full verbose output with JSON logs and colors
+  - `make test-quiet`: Clean summary showing only test names and results
+- Output uses ANSI escape codes and works in most modern terminals
+contains comprehensive tests:
 - `TestHealthCheckHandler` - Verifies /health endpoint and Redis connectivity
 - `TestDomainBlacklist` - Tests GET /domain with test.uribl.com (expects 127.0.0.14 from multi.uribl.com)
 - `TestIPBlacklist` - Tests GET /ip with 2.0.0.127 (expects 127.0.0.11 from zen.spamhaus.org)
