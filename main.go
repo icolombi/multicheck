@@ -19,7 +19,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// Struttura per generare il log di start in JSON
+// Structure to generate the start log in JSON format
 type StartLog struct {
 	CurrentTime time.Time
 	Redis       bool // Is Redis available at the start?
@@ -27,7 +27,7 @@ type StartLog struct {
 	Errors      []string
 }
 
-// Struttura per generare il log in formato JSON
+// Structure to generate the log in JSON format
 type Log struct {
 	CurrentTime      time.Time
 	HTTPMethod       string // HTTP method (GET, POST, PUT, etc.)
@@ -45,7 +45,7 @@ type Log struct {
 	RedisConnections int     // Count Redis Active connections
 }
 
-// Struttura per contenere le configurazioni
+// Structure to hold configuration settings
 type Config struct {
 	domainBlacklist      []string
 	ipBlacklist          []string
@@ -66,7 +66,7 @@ type Config struct {
 	RedisPassword        string
 }
 
-// Struct per rappresentare la risposta di un oggetto di tipo IP
+// Struct to represent the response of an IP object
 type Ip struct {
 	IP          string              // The input IP
 	ValidIP     bool                // Is the IP valid?
@@ -78,14 +78,14 @@ type Ip struct {
 	Cached      bool                // From Redis?
 }
 
-// Struct per il body della richiesta POST /ip/check
+// Struct for the request body of POST /ip/check
 type CheckIpRequest struct {
 	IP          string   `json:"ip"`
 	Blacklists  []string `json:"blacklists"`
 	Nameservers []string `json:"nameservers,omitempty"`
 }
 
-// Struct per rappresentare la risposta un oggetto di tipo Domain
+// Struct to represent the response of a Domain object
 type Domain struct {
 	Domain      string              // The input Domain
 	ValidDomain bool                // Is the Domain valid?
@@ -97,14 +97,14 @@ type Domain struct {
 	Cached      bool                // From Redis?
 }
 
-// Struct per il body della richiesta POST /domain/check
+// Struct for the request body of POST /domain/check
 type CheckDomainRequest struct {
 	Domain      string   `json:"domain"`
 	Blacklists  []string `json:"blacklists"`
 	Nameservers []string `json:"nameservers,omitempty"`
 }
 
-// Struct per rappresentare la risposta di un oggetto DelCache
+// Struct to represent the response of a DelCache object
 type ClearCache struct {
 	Status    bool
 	Key       string
@@ -112,7 +112,7 @@ type ClearCache struct {
 	TimeTaken float64
 }
 
-// Struct per l'oggetto di health check
+// Struct for the health check object
 type Health struct {
 	Alive            bool
 	Redis            bool
@@ -122,7 +122,7 @@ type Health struct {
 	Version          string
 }
 
-// Struct per l'oggetto di root (Help, pagina principale)
+// Struct for the root object (Help, main page)
 type Root struct {
 	EndPoints       []string
 	DomainBlacklist []string
@@ -132,13 +132,13 @@ type Root struct {
 	ListenPort      string
 }
 
-// Variabile per contenere lo start log
+// Variable to hold the start log
 var startLog StartLog
 
-// Variabile per contenere le configurazioni
+// Variable to hold configuration settings
 var configuration Config
 
-// Variabile per contenere le informazioni sugli endpoints
+// Variable to hold information about endpoints
 var endpoints Root
 
 var c *redis.Pool
@@ -150,21 +150,21 @@ var nameservers []string
 var uptime time.Duration
 var startTime = time.Now()
 
-// version può essere impostata durante la build con -ldflags "-X main.version=x.y.z"
+// version can be set during build with -ldflags "-X main.version=x.y.z"
 var version = "1.0.0"
 
 func main() {
-	// Momento di avvio, usato per calcolare l'uptime
+	// Start time, used to calculate uptime
 
 	configuration = ReadConfig(configuration)
 
-	// Inizializza la connessione Redis dopo aver caricato la configurazione
+	// Initialize Redis connection after loading configuration
 	c = redisConnect()
 
-	// Inizializza il router
+	// Initialize the router
 	r := mux.NewRouter()
 
-	// Endpoints della API
+	// API Endpoints
 	//r.HandleFunc("/items", GetItems).Methods("GET")
 	// r.HandleFunc("/items/{id}", GetItem).Methods("GET")
 	// r.HandleFunc("/items", CreateItem).Methods("POST")
@@ -179,8 +179,8 @@ func main() {
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
 
-	// Definisco un custom resolver per poter utilizzare dei name server di versi da quelli di sistema
-	// Elenco dei name servers
+	// Define a custom resolver to use different name servers than system defaults
+	// List of name servers
 	nameservers = configuration.nameServers
 
 	resolver = &net.Resolver{
@@ -205,8 +205,8 @@ func main() {
 		startLog.Redis = true
 	}
 
-	// Avvia il server
-	//fmt.Println("Server in ascolto...")
+	// Start the server
+	//fmt.Println("Server listening...")
 	u, err := json.MarshalIndent(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort}, "", "   ")
 	if err != nil {
 		panic(err)
@@ -240,7 +240,7 @@ func main() {
 
 }
 
-// Funzione di root /
+// Root handler for /
 func RootHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
@@ -262,14 +262,14 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 	logRequest("GET", http.StatusOK, "/", "", "", errors, 0, false, clientIP, false, 0)
 }
 
-// Funzione di healthcheck
+// Health check handler
 func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 	var errors []string
 	var health Health
 	w.Header().Set("Content-Type", "application/json")
 
-	// Controllo lo stato di Redis
+	// Check Redis status
 
 	reply, err := pingRedis()
 	if err != nil || reply != "PONG" {
@@ -288,7 +288,7 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	logRequest("GET", http.StatusOK, "/health", "", "", errors, 0, false, "", health.Redis, health.RedisConnections)
 }
 
-// Funzione per ottenere info sull'IP
+// Function to get IP information
 func GetIp(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
@@ -313,7 +313,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	ip.BlackList = nil
 	ipAddress := params["ip"]
 
-	// Valida lunghezza IP
+	// Validate IP length
 	if len(ipAddress) > configuration.MaxStringLength {
 		ip.ValidIP = false
 		ip.Status = false
@@ -326,15 +326,15 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if net.ParseIP(params["ip"]) != nil {
 		ip.ValidIP = true
-		// Cerco in Redis se è in cache
+		// Look for it in Redis cache
 		value, err := getRedisKey(ipAddress)
 
-		// Se non è in cache controllo le blacklist
+		// If not in cache, check the blacklists
 		if err != nil {
 
 			ip.BlackListed, ip.BlackList, errors = checkBlacklistIP(ipAddress)
 
-			// Se è in cache prendo i dati da Redis
+			// If found in cache, get data from Redis
 		} else {
 			//fmt.Println(value)
 			json.Unmarshal([]byte(value), &ip)
@@ -342,7 +342,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		}
 
 	} else {
-		// Se l'IP non è valido imposto a False la relativa variabile
+		// If IP is not valid, set the variable to False
 		ip.ValidIP = false
 		ip.Status = false
 		elapsed := time.Since(start).Seconds()
@@ -361,7 +361,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		Status:      ip.Status,
 		Errors:      errors}
 	//fmt.Println(json.Marshal(ip))
-	// Se l'IP non è in cache E l'IP è valido, salva in Redis
+	// If IP is not in cache AND IP is valid, save to Redis
 	if !ip.Cached && ip.ValidIP {
 		value, _ := json.Marshal(ip)
 		valueStr := string(value)
@@ -377,7 +377,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	logRequest("GET", http.StatusOK, "/ip", params["ip"], "", errors, elapsed, ip.Cached, clientIP, redisAvailable, redisConnections)
 }
 
-// Funzione per ottenere info su un dominio
+// Function to get domain information
 func GetDomain(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
@@ -404,7 +404,7 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	domain.BlackList = nil
 	domainName := params["domain"]
 
-	// Valida lunghezza domain
+	// Validate domain length
 	if len(domainName) > configuration.MaxStringLength {
 		domain.ValidDomain = false
 		domain.Status = false
@@ -417,9 +417,9 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if validator.IsValidDomain(params["domain"]) {
 		domain.ValidDomain = true
-		// Cerco in Redis se è in cache
+		// Look for it in Redis cache
 		value, err := getRedisKey(domainName)
-		// Se non è in cache controllo le blacklist
+		// If not in cache, check the blacklists
 		if err != nil {
 			domain.BlackListed, domain.BlackList, errors = checkBlacklistDomain(domainName)
 		} else {
@@ -447,7 +447,7 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		Status:      domain.Status,
 		Errors:      errors}
 
-	// Se il dominio non è in cache E il dominio è valido, salva in Redis
+	// If domain is not in cache AND domain is valid, save to Redis
 	if !domain.Cached && domain.ValidDomain {
 		value, _ := json.Marshal(domain)
 		valueStr := string(value)
@@ -461,7 +461,7 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	logRequest("GET", http.StatusOK, "/domain", params["domain"], "", errors, elapsed, domain.Cached, clientIP, redisAvailable, redisConnections)
 }
 
-// Handler POST per verificare IP con blacklist personalizzate
+// POST handler to check IP against custom blacklists
 func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
@@ -469,7 +469,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	var req CheckIpRequest
 	var ip Ip
 
-	// Controllo Redis
+	// Check Redis
 	redisAvailable := false
 	redisConnections := 0
 	reply, err := pingRedis()
@@ -505,7 +505,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	}
 	requestBody := string(bodyBytes)
 
-	// Decodifica il body JSON
+	// Decode JSON body
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
 	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&req)
@@ -520,7 +520,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Valida lunghezza IP
+	// Validate IP length
 	if len(req.IP) > configuration.MaxStringLength {
 		ip.ValidIP = false
 		ip.Status = false
@@ -533,7 +533,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Valida l'IP
+	// Validate IP
 	if net.ParseIP(req.IP) == nil {
 		ip.ValidIP = false
 		ip.Status = false
@@ -547,7 +547,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	}
 	ip.ValidIP = true
 
-	// Valida le blacklist
+	// Validate blacklists
 	valid, errorMsg := validateBlacklists(req.Blacklists, configuration.MaxCustomBlacklists)
 	if !valid {
 		ip.Status = false
@@ -560,7 +560,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Valida i nameserver se forniti
+	// Validate nameservers if provided
 	valid, errorMsg = validateNameservers(req.Nameservers, configuration.MaxCustomNameservers)
 	if !valid {
 		ip.Status = false
@@ -595,7 +595,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		customResolver = createCustomResolver(req.Nameservers)
 	}
 
-	// Controlla le blacklist personalizzate
+	// Check custom blacklists
 	ip.BlackListed, ip.BlackList, errors = checkBlacklistIPWithCustomList(req.IP, req.Blacklists, customResolver)
 
 	elapsed := time.Since(start).Seconds()
@@ -622,7 +622,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	logRequest("POST", http.StatusOK, "/ip/check", req.IP, requestBody, ip.Errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }
 
-// Handler POST per verificare domini con blacklist personalizzate
+// POST handler to check domains against custom blacklists
 func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
@@ -630,7 +630,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	var req CheckDomainRequest
 	var domain Domain
 
-	// Controllo Redis
+	// Check Redis
 	redisAvailable := false
 	redisConnections := 0
 	reply, err := pingRedis()
@@ -666,7 +666,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	requestBody := string(bodyBytes)
 
-	// Decodifica il body JSON
+	// Decode JSON body
 	decoder := json.NewDecoder(bytes.NewReader(bodyBytes))
 	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&req)
@@ -681,7 +681,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Valida lunghezza domain
+	// Validate domain length
 	if len(req.Domain) > configuration.MaxStringLength {
 		domain.ValidDomain = false
 		domain.Status = false
@@ -694,7 +694,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Valida il dominio
+	// Validate domain
 	if !validator.IsValidDomain(req.Domain) {
 		domain.ValidDomain = false
 		domain.Status = false
@@ -708,7 +708,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	domain.ValidDomain = true
 
-	// Valida le blacklist
+	// Validate blacklists
 	valid, errorMsg := validateBlacklists(req.Blacklists, configuration.MaxCustomBlacklists)
 	if !valid {
 		domain.Status = false
@@ -721,7 +721,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Valida i nameserver se forniti
+	// Validate nameservers if provided
 	valid, errorMsg = validateNameservers(req.Nameservers, configuration.MaxCustomNameservers)
 	if !valid {
 		domain.Status = false
@@ -756,7 +756,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		customResolver = createCustomResolver(req.Nameservers)
 	}
 
-	// Controlla le blacklist personalizzate
+	// Check custom blacklists
 	domain.BlackListed, domain.BlackList, errors = checkBlacklistDomainWithCustomList(req.Domain, req.Blacklists, customResolver)
 
 	elapsed := time.Since(start).Seconds()
@@ -783,7 +783,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	logRequest("POST", http.StatusOK, "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }
 
-// Helper per il logging (DRY)
+// Helper function for logging (DRY)
 func logRequest(httpMethod string, httpStatusCode int, method string, param string, requestBody string, errors []string, elapsed float64, cached bool, clientIP string, redisAvailable bool, redisConnections int) {
 	var memAlloc uint64
 	var numGC uint32
@@ -811,7 +811,7 @@ func logRequest(httpMethod string, httpStatusCode int, method string, param stri
 	fmt.Println(string(u))
 }
 
-// Cancella cache
+// Clear cache
 func DelCache(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	clientIP := r.RemoteAddr

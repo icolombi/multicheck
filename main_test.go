@@ -14,14 +14,14 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// setupTestWithResolver inizializza la configurazione, il pool Redis e il resolver per i test
+// setupTestWithResolver initializes configuration, Redis pool and resolver for tests
 func setupTestWithResolver() {
 	if configuration.listenPort == "" {
 		configuration = ReadConfig(configuration)
 		c = redisConnect()
 	}
 
-	// Inizializza sempre il resolver e nameservers (anche se già configurato prima)
+	// Always initialize resolver and nameservers (even if already configured)
 	nameservers = configuration.nameServers
 	if len(nameservers) > 0 {
 		resolver = &net.Resolver{
@@ -40,7 +40,7 @@ func setupTestWithResolver() {
 func TestHealthCheckHandler(t *testing.T) {
 	setupTestWithResolver()
 
-	// Struct per contenere la risposta
+	// Struct to hold the response
 	type Message struct {
 		Alive            bool
 		Redis            bool
@@ -83,30 +83,30 @@ func TestHealthCheckHandler(t *testing.T) {
 }
 
 func TestDomainBlacklist(t *testing.T) {
-	// Inizializza la configurazione, Redis e resolver
+	// Initialize configuration, Redis and resolver
 	setupTestWithResolver()
 
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
 	}
 
-	// Crea il router con il handler
+	// Create router with handler
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
 
-	// Crea la richiesta per test.uribl.com
+	// Create request for test.uribl.com
 	req, err := http.NewRequest("GET", "/domain/test.uribl.com", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Crea un ResponseRecorder per registrare la risposta
+	// Create a ResponseRecorder to record the response
 	rr := httptest.NewRecorder()
 
-	// Esegui la richiesta
+	// Execute the request
 	r.ServeHTTP(rr, req)
 
-	// Controlla lo status code
+	// Check status code
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
@@ -119,23 +119,23 @@ func TestDomainBlacklist(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	// Verifica che il dominio sia valido
+	// Check the domain is valid
 	if !response.ValidDomain {
 		t.Errorf("Expected ValidDomain to be true, got false")
 	}
 
-	// Verifica che il dominio sia blacklistato
+	// Check the domain is blacklisted
 	if !response.BlackListed {
 		t.Errorf("Expected test.uribl.com to be blacklisted, but it was not detected as blacklisted")
 	}
 
-	// Verifica che multi.uribl.com sia nella lista delle blacklist
+	// check that multi.uribl.com is in the blacklist list
 	blacklistIPs, found := response.BlackList["multi.uribl.com"]
 	if !found {
 		t.Errorf("Expected test.uribl.com to be blacklisted by multi.uribl.com, but it was not found in BlackList map")
 		t.Logf("BlackList content: %+v", response.BlackList)
 	} else {
-		// Verifica che il codice di risposta sia 127.0.0.14
+		// check that the response is 127.0.0.14
 		expectedIP := net.ParseIP("127.0.0.14")
 		found := false
 		for _, ip := range blacklistIPs {
@@ -149,66 +149,66 @@ func TestDomainBlacklist(t *testing.T) {
 		}
 	}
 
-	// Verifica che non ci siano errori
+	// Check that there are no errors
 	if len(response.Errors) > 0 {
 		t.Logf("Errors reported: %v", response.Errors)
 	}
 }
 
 func TestIPBlacklist(t *testing.T) {
-	// Inizializza la configurazione, Redis e resolver
+	// Initialize configuration, Redis and resolver
 	setupTestWithResolver()
 
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
 	}
 
-	// Crea il router con il handler
+	// Create router with handler
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
 
-	// Crea la richiesta per 2.0.0.127
+	// Create request for 2.0.0.127
 	req, err := http.NewRequest("GET", "/ip/2.0.0.127", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Crea un ResponseRecorder per registrare la risposta
+	// Create a ResponseRecorder to record the response
 	rr := httptest.NewRecorder()
 
-	// Esegui la richiesta
+	// Execute the request
 	r.ServeHTTP(rr, req)
 
-	// Controlla lo status code
+	// Check status code
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
 	}
 
-	// Decodifica la risposta JSON
+	// Decode JSON response
 	var response Ip
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	if err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	// Verifica che l'IP sia valido
+	// Verify IP is valid
 	if !response.ValidIP {
 		t.Errorf("Expected ValidIP to be true, got false")
 	}
 
-	// Verifica che l'IP sia blacklistato
+	// Verify IP is blacklisted
 	if !response.BlackListed {
 		t.Errorf("Expected 2.0.0.127 to be blacklisted, but it was not detected as blacklisted")
 	}
 
-	// Verifica che zen.spamhaus.org sia nella lista delle blacklist
+	// Verify zen.spamhaus.org is in the blacklist list
 	blacklistIPs, found := response.BlackList["zen.spamhaus.org"]
 	if !found {
 		t.Errorf("Expected 2.0.0.127 to be blacklisted by zen.spamhaus.org, but it was not found in BlackList map")
 		t.Logf("BlackList content: %+v", response.BlackList)
 	} else {
-		// Verifica che il codice di risposta sia 127.0.0.11
+		// Verify response code is 127.0.0.11
 		expectedIP := net.ParseIP("127.0.0.11")
 		found := false
 		for _, ip := range blacklistIPs {
@@ -222,25 +222,25 @@ func TestIPBlacklist(t *testing.T) {
 		}
 	}
 
-	// Verifica che non ci siano errori
+	// Check that there are no errors
 	if len(response.Errors) > 0 {
 		t.Logf("Errors reported: %v", response.Errors)
 	}
 }
 
 func TestPostCheckDomain(t *testing.T) {
-	// Inizializza la configurazione, Redis e resolver
+	// Initialize configuration, Redis and resolver
 	setupTestWithResolver()
 
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
 	}
 
-	// Crea il router con il handler
+	// Create router with handler
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 
-	// Prepara il body della richiesta
+	// Prepare request body
 	requestBody := CheckDomainRequest{
 		Domain:     "test.uribl.com",
 		Blacklists: []string{"multi.uribl.com"},
@@ -250,43 +250,43 @@ func TestPostCheckDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Crea la richiesta POST
+	// Create POST request
 	req, err := http.NewRequest("POST", "/domain/check", bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Crea un ResponseRecorder per registrare la risposta
+	// Create a ResponseRecorder to record the response
 	rr := httptest.NewRecorder()
 
-	// Esegui la richiesta
+	// Execute the request
 	r.ServeHTTP(rr, req)
 
-	// Controlla lo status code
+	// Check status code
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
 	}
 
-	// Decodifica la risposta JSON
+	// Decode JSON response
 	var response Domain
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	if err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	// Verifica che il dominio sia valido
+	// Check the domain is valid
 	if !response.ValidDomain {
 		t.Errorf("Expected ValidDomain to be true, got false")
 	}
 
-	// Verifica che il dominio sia blacklistato
+	// Check the domain is blacklisted
 	if !response.BlackListed {
 		t.Errorf("Expected test.uribl.com to be blacklisted, but it was not detected as blacklisted")
 	}
 
-	// Verifica che multi.uribl.com sia nella lista delle blacklist
+	// Check that multi.uribl.com is in the blacklist list
 	blacklistIPs, found := response.BlackList["multi.uribl.com"]
 	if !found {
 		t.Errorf("Expected test.uribl.com to be blacklisted by multi.uribl.com, but it was not found in BlackList map")
@@ -306,25 +306,25 @@ func TestPostCheckDomain(t *testing.T) {
 		}
 	}
 
-	// Verifica che non ci siano errori
+	// Check that there are no errors
 	if len(response.Errors) > 0 {
 		t.Logf("Errors reported: %v", response.Errors)
 	}
 }
 
 func TestPostCheckIP(t *testing.T) {
-	// Inizializza la configurazione, Redis e resolver
+	// Initialize configuration, Redis and resolver
 	setupTestWithResolver()
 
 	if len(nameservers) == 0 {
 		t.Fatal("No nameservers configured in config.toml")
 	}
 
-	// Crea il router con il handler
+	// Create router with handler
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 
-	// Prepara il body della richiesta
+	// Prepare request body
 	requestBody := CheckIpRequest{
 		IP:         "2.0.0.127",
 		Blacklists: []string{"zen.spamhaus.org"},
@@ -334,49 +334,49 @@ func TestPostCheckIP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Crea la richiesta POST
+	// Create POST request
 	req, err := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Crea un ResponseRecorder per registrare la risposta
+	// Create a ResponseRecorder to record the response
 	rr := httptest.NewRecorder()
 
-	// Esegui la richiesta
+	// Execute the request
 	r.ServeHTTP(rr, req)
 
-	// Controlla lo status code
+	// Check status code
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			status, http.StatusOK)
 	}
 
-	// Decodifica la risposta JSON
+	// Decode JSON response
 	var response Ip
 	err = json.NewDecoder(rr.Body).Decode(&response)
 	if err != nil {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	// Verifica che l'IP sia valido
+	// Check IP is valid
 	if !response.ValidIP {
 		t.Errorf("Expected ValidIP to be true, got false")
 	}
 
-	// Verifica che l'IP sia blacklistato
+	// Check IP is blacklisted
 	if !response.BlackListed {
 		t.Errorf("Expected 2.0.0.127 to be blacklisted, but it was not detected as blacklisted")
 	}
 
-	// Verifica che zen.spamhaus.org sia nella lista delle blacklist
+	// Check that zen.spamhaus.org is in the blacklist list
 	blacklistIPs, found := response.BlackList["zen.spamhaus.org"]
 	if !found {
 		t.Errorf("Expected 2.0.0.127 to be blacklisted by zen.spamhaus.org, but it was not found in BlackList map")
 		t.Logf("BlackList content: %+v", response.BlackList)
 	} else {
-		// Verifica che il codice di risposta sia 127.0.0.11
+		// Check that the response is 127.0.0.11
 		expectedIP := net.ParseIP("127.0.0.11")
 		found := false
 		for _, ip := range blacklistIPs {
@@ -390,7 +390,7 @@ func TestPostCheckIP(t *testing.T) {
 		}
 	}
 
-	// Verifica che non ci siano errori
+	// Check that there are no errors
 	if len(response.Errors) > 0 {
 		t.Logf("Errors reported: %v", response.Errors)
 	}

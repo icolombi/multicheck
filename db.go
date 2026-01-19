@@ -17,14 +17,14 @@ func redisConnect() *redis.Pool {
 				//panic(err.Error())
 				return c, err
 			}
-			// Autenticazione se è presente una password
+			// Authentication if a password is present
 			if configuration.RedisPassword != "" {
 				if _, err := c.Do("AUTH", configuration.RedisPassword); err != nil {
 					c.Close()
 					return nil, err
 				}
 			}
-			// Selezione del database
+			// Database selection
 			if _, err := c.Do("SELECT", configuration.RedisDatabase); err != nil {
 				c.Close()
 				return nil, err

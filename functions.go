@@ -59,7 +59,7 @@ func ReadConfig(c Config) (configuration Config) {
 	return configuration
 }
 
-// Funzione per ricavare l'uso di memoria
+// Function to get memory usage
 func MemUsage() (memAlloc uint64, numGC uint32) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -72,7 +72,7 @@ func bToKb(b uint64) uint64 {
 	return b / 1024
 }
 
-// Funzione per rimuovere l'IP 127.0.0.1 da uno slice
+// Function to remove IPs 127.0.0.1 and 127.255.255.255 from a slice
 func removeIPFromSlice(slice []net.IP) []net.IP {
 	var result []net.IP
 
@@ -85,27 +85,27 @@ func removeIPFromSlice(slice []net.IP) []net.IP {
 	return result
 }
 
-// Valida una lista di nameserver (devono essere IP validi)
+// Validates a list of nameservers (must be valid IPs)
 func validateNameservers(nameservers []string, maxAllowed int) (valid bool, errorMsg string) {
-	// Se la lista è vuota, è valida (useremo i default)
+	// If the list is empty, it's valid (we'll use defaults)
 	if len(nameservers) == 0 {
 		return true, ""
 	}
 
-	// Controllo limite massimo
+	// Check maximum limit
 	if len(nameservers) > maxAllowed {
 		return false, fmt.Sprintf("too many nameservers: maximum %d allowed, received %d", maxAllowed, len(nameservers))
 	}
 
-	// Validazione che ogni nameserver sia un IP valido
+	// Validate that each nameserver is a valid IP
 	for _, ns := range nameservers {
-		// Controllo che non sia vuoto o solo spazi
+		// Check that it's not empty or whitespace only
 		trimmed := strings.TrimSpace(ns)
 		if trimmed == "" {
 			return false, "nameserver entries cannot be empty or whitespace"
 		}
 
-		// Validazione IP
+		// IP validation
 		if net.ParseIP(trimmed) == nil {
 			return false, fmt.Sprintf("invalid nameserver: '%s' is not a valid IP address", trimmed)
 		}
@@ -114,39 +114,39 @@ func validateNameservers(nameservers []string, maxAllowed int) (valid bool, erro
 	return true, ""
 }
 
-// Valida una lista di blacklist per sintassi DNS e limiti
+// Validates a list of blacklists for DNS syntax and limits
 func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorMsg string) {
-	// Controllo lista vuota
+	// Check for empty list
 	if len(blacklists) == 0 {
 		return false, "blacklist array cannot be empty"
 	}
 
-	// Controllo limite massimo
+	// Check maximum limit
 	if len(blacklists) > maxAllowed {
 		return false, fmt.Sprintf("too many blacklists: maximum %d allowed, received %d", maxAllowed, len(blacklists))
 	}
 
-	// Validazione sintassi DNS per ogni blacklist
+	// Validate DNS syntax for each blacklist
 	for _, bl := range blacklists {
-		// Controllo che non sia vuoto o solo spazi
+		// Check that it's not empty or whitespace only
 		trimmed := strings.TrimSpace(bl)
 		if trimmed == "" {
 			return false, "blacklist entries cannot be empty or whitespace"
 		}
 
-		// Controllo lunghezza massima (standard DNS: 253 caratteri)
+		// Check maximum length (DNS standard: 253 characters)
 		if len(trimmed) > configuration.MaxStringLength {
 			return false, fmt.Sprintf("blacklist name too long: '%s' (maximum %d characters)", trimmed, configuration.MaxStringLength)
 		}
 
-		// Validazione base del formato DNS
-		// Deve contenere almeno un punto e caratteri validi
+		// Basic DNS format validation
+		// Must contain at least one dot and valid characters
 		if !strings.Contains(trimmed, ".") {
 			return false, fmt.Sprintf("invalid blacklist format: '%s' (must be a valid DNS name)", trimmed)
 		}
 
-		// Controllo caratteri non validi per DNS
-		// DNS permette: lettere, numeri, trattino e punto
+		// Check for invalid DNS characters
+		// DNS allows: letters, numbers, hyphen and dot
 		for _, char := range trimmed {
 			if !((char >= 'a' && char <= 'z') ||
 				(char >= 'A' && char <= 'Z') ||
@@ -156,13 +156,13 @@ func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorM
 			}
 		}
 
-		// Controllo che non inizi o finisca con punto o trattino
+		// Check that it doesn't start or end with dot or hyphen
 		if strings.HasPrefix(trimmed, ".") || strings.HasSuffix(trimmed, ".") ||
 			strings.HasPrefix(trimmed, "-") || strings.HasSuffix(trimmed, "-") {
 			return false, fmt.Sprintf("invalid blacklist format: '%s' (cannot start or end with . or -)", trimmed)
 		}
 
-		// Controllo punti consecutivi
+		// Check for consecutive dots
 		if strings.Contains(trimmed, "..") {
 			return false, fmt.Sprintf("invalid blacklist format: '%s' (cannot contain consecutive dots)", trimmed)
 		}
@@ -171,7 +171,7 @@ func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorM
 	return true, ""
 }
 
-// Crea un resolver custom con i nameserver specificati
+// Creates a custom resolver with the specified nameservers
 func createCustomResolver(nameservers []string) *net.Resolver {
 	return &net.Resolver{
 		PreferGo:     true,
@@ -186,16 +186,16 @@ func createCustomResolver(nameservers []string) *net.Resolver {
 	}
 }
 
-// Passando un IP restituisce la sua presenza in un elenco di blacklist
+// Given an IP, returns its presence in a list of blacklists
 func checkBlacklistIP(ipAddress string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
 	return checkBlacklistIPWithCustomList(ipAddress, configuration.ipBlacklist, nil)
 }
 
-// Passando un IP e una lista custom di blacklist restituisce la sua presenza
-// Se customResolver è nil, usa il resolver globale
+// Given an IP and a custom list of blacklists, returns its presence
+// If customResolver is nil, uses the global resolver
 func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string, customResolver *net.Resolver) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
 
-	// Se non è specificato un resolver custom, usa quello globale
+	// If no custom resolver is specified, use the global one
 	resolverToUse := resolver
 	if customResolver != nil {
 		resolverToUse = customResolver
@@ -205,7 +205,7 @@ func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string, custo
 	reverseIP := reverseIP(ipAddress)
 	blacklistsActive = make(map[string][]net.IP)
 	blacklisted = false
-	// WaitGroup e Mutex per proteggere accessi concorrenti alla map
+	// WaitGroup and Mutex to protect concurrent map access
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	errorCh := make(chan string, max)
@@ -225,7 +225,7 @@ func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string, custo
 	return blacklisted, blacklistsActive, errorList
 }
 
-// Funzione per le query DNS sull'IP
+// Function for DNS queries on IP
 func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool, resolverToUse *net.Resolver) {
 	//fmt.Println("Checking " + blacklist)
 	defer wg.Done()
@@ -248,7 +248,7 @@ func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP 
 		//fmt.Print("Blacklisted A: ")
 		//fmt.Println(value)
 		*blacklisted = true
-		// Proteggo la scrittura sulla map condivisa
+		// Protect shared map write
 		mu.Lock()
 		blacklistsActive[blacklist] = value
 		mu.Unlock()
@@ -256,7 +256,7 @@ func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP 
 	errorCh <- error
 }
 
-// Funzione per la conversione di un indirizzo IP in un nome di dominio inverso (i.e. "127.0.0.1" > "1.0.0.127")
+// Function to convert an IP address to a reverse domain name (i.e. "127.0.0.1" > "1.0.0.127")
 func reverseIP(ipAddress string) string {
 	parts := strings.Split(ipAddress, ".")
 	reversedParts := make([]string, len(parts))
@@ -266,16 +266,16 @@ func reverseIP(ipAddress string) string {
 	return strings.Join(reversedParts, ".")
 }
 
-// Passando un dominio restituisce la sua presenza in un elenco di blacklist
+// Given a domain, returns its presence in a list of blacklists
 func checkBlacklistDomain(domainName string) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
 	return checkBlacklistDomainWithCustomList(domainName, configuration.domainBlacklist, nil)
 }
 
-// Passando un dominio e una lista custom di blacklist restituisce la sua presenza
-// Se customResolver è nil, usa il resolver globale
+// Given a domain and a custom list of blacklists, returns its presence
+// If customResolver is nil, uses the global resolver
 func checkBlacklistDomainWithCustomList(domainName string, blackLists []string, customResolver *net.Resolver) (blacklisted bool, blacklistsActive map[string][]net.IP, errorList []string) {
 
-	// Se non è specificato un resolver custom, usa quello globale
+	// If no custom resolver is specified, use the global one
 	resolverToUse := resolver
 	if customResolver != nil {
 		resolverToUse = customResolver
@@ -284,7 +284,7 @@ func checkBlacklistDomainWithCustomList(domainName string, blackLists []string, 
 	max := len(blackLists)
 	blacklistsActive = make(map[string][]net.IP)
 	blacklisted = false
-	// WaitGroup e Mutex per proteggere accessi concorrenti alla map
+	// WaitGroup and Mutex to protect concurrent map access
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	errorCh := make(chan string, max)
@@ -303,14 +303,14 @@ func checkBlacklistDomainWithCustomList(domainName string, blackLists []string, 
 	return blacklisted, blacklistsActive, errorList
 }
 
-// Funzione per le query DNS sul dominio
+// Function for DNS queries on domain
 func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domainName string, blacklistsActive map[string][]net.IP, errorCh chan string, blacklisted *bool, resolverToUse *net.Resolver) {
 	defer wg.Done() // Decrease the WaitGroup counter by 1
 	var error string
 
 	//value, err := net.LookupIP(domainName + "." + blacklist)
 
-	// Debug tempo esecuzione query DNS
+	// Debug DNS query execution time
 	//start := time.Now()
 
 	// Create context with timeout to prevent DNS queries from hanging
@@ -330,13 +330,13 @@ func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domain
 	if len(value) != 0 {
 
 		*blacklisted = true
-		// Proteggo la scrittura sulla map condivisa
+		// Protect shared map write
 		mu.Lock()
 		blacklistsActive[blacklist] = value
 		mu.Unlock()
 	}
 
-	// Debug tempo esecuzione query DNS
+	// Debug DNS query execution time
 	// elapsed := time.Since(start).Seconds()
 	//fmt.Println(blacklist)
 	//fmt.Println(elapsed)

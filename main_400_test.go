@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// setupTest inizializza la configurazione e il pool Redis per i test
+// setupTest initializes configuration and Redis pool for tests
 func setupTest() {
 	if configuration.listenPort == "" {
 		configuration = ReadConfig(configuration)
@@ -19,7 +19,7 @@ func setupTest() {
 	}
 }
 
-// Test per verificare che GET /ip restituisca 400 con IP non valido
+// Test to verify that GET /ip returns 400 with invalid IP
 func TestGetIpInvalid(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -32,7 +32,7 @@ func TestGetIpInvalid(t *testing.T) {
 	}
 }
 
-// Test per verificare che GET /domain restituisca 400 con dominio non valido
+// Test to verify that GET /domain returns 400 with invalid domain
 func TestGetDomainInvalid(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -45,7 +45,7 @@ func TestGetDomainInvalid(t *testing.T) {
 	}
 }
 
-// Test per verificare che POST /ip/check restituisca 400 con IP non valido
+// Test to verify that POST /ip/check returns 400 with invalid IP
 func TestPostCheckIpInvalidIP(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -61,7 +61,7 @@ func TestPostCheckIpInvalidIP(t *testing.T) {
 	}
 }
 
-// Test per verificare che POST /ip/check restituisca 400 con blacklist vuota
+// Test to verify that POST /ip/check returns 400 with empty blacklist
 func TestPostCheckIpEmptyBlacklists(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -77,7 +77,7 @@ func TestPostCheckIpEmptyBlacklists(t *testing.T) {
 	}
 }
 
-// Test per verificare che POST /ip/check restituisca 400 con troppe blacklist
+// Test to verify that POST /ip/check returns 400 with too many blacklists
 func TestPostCheckIpTooManyBlacklists(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -97,7 +97,7 @@ func TestPostCheckIpTooManyBlacklists(t *testing.T) {
 	}
 }
 
-// Test per verificare che POST /ip/check restituisca 400 con nameserver non valido
+// Test to verify that POST /ip/check returns 400 with invalid nameserver
 func TestPostCheckIpInvalidNameservers(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -113,7 +113,7 @@ func TestPostCheckIpInvalidNameservers(t *testing.T) {
 	}
 }
 
-// Test per verificare che POST /domain/check restituisca 400 con dominio non valido
+// Test to verify that POST /domain/check returns 400 with invalid domain
 func TestPostCheckDomainInvalidDomain(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -129,7 +129,7 @@ func TestPostCheckDomainInvalidDomain(t *testing.T) {
 	}
 }
 
-// Test per verificare che POST /domain/check restituisca 400 con blacklist vuota
+// Test to verify that POST /domain/check returns 400 with empty blacklist
 func TestPostCheckDomainEmptyBlacklists(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
@@ -145,7 +145,7 @@ func TestPostCheckDomainEmptyBlacklists(t *testing.T) {
 	}
 }
 
-// Test per verificare che POST /domain/check restituisca 400 con JSON malformato
+// Test to verify that POST /domain/check returns 400 with malformed JSON
 func TestPostCheckDomainInvalidJSON(t *testing.T) {
 	setupTest()
 	r := mux.NewRouter()
