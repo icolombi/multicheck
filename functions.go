@@ -356,6 +356,19 @@ func getRedisConnections() (reply int) {
 	return count
 }
 
+// getRedisKeysCount returns the number of keys in the current Redis database
+func getRedisKeysCount() (count int) {
+	conn := c.Get()
+	defer conn.Close()
+
+	// DBSIZE returns the number of keys in the currently selected database
+	count, err := redis.Int(conn.Do("DBSIZE"))
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
 // getRedisKey get a key from Redis
 func getRedisKey(key string) (reply string, err error) {
 

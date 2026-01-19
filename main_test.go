@@ -1008,3 +1008,421 @@ func TestPostCheckDomainInvalidNameservers(t *testing.T) {
 		t.Errorf("Expected 400, got %v", rr.Code)
 	}
 }
+
+// Test to verify cache consistency for domain blacklist checks
+// Verifies that cached responses are identical to original responses except for Cached flag
+func TestDomainBlacklistCacheConsistency(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
+
+	testDomain := "github.com"
+
+	// First request - should not be cached
+	req1, _ := http.NewRequest("GET", "/domain/"+testDomain, nil)
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("First request failed with status %v", rr1.Code)
+	}
+
+	var response1 Domain
+	err := json.NewDecoder(rr1.Body).Decode(&response1)
+	if err != nil {
+		t.Fatalf("Failed to decode first response: %v", err)
+	}
+
+	// Verify domain is valid
+	if !response1.ValidDomain {
+		t.Errorf("Expected ValidDomain to be true, got false")
+	}
+
+	// Verify first response is not from cache
+	if response1.Cached {
+		t.Logf("Warning: First request was already cached (possible from previous test)")
+	}
+
+	// Second request - should be cached
+	req2, _ := http.NewRequest("GET", "/domain/"+testDomain, nil)
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("Second request failed with status %v", rr2.Code)
+	}
+
+	var response2 Domain
+	err = json.NewDecoder(rr2.Body).Decode(&response2)
+	if err != nil {
+		t.Fatalf("Failed to decode second response: %v", err)
+	}
+
+	// Verify second response is from cache
+	if !response2.Cached {
+		t.Errorf("Expected second request to be cached (Cached=true), got Cached=false")
+	}
+
+	// Compare all fields except Cached and TimeTaken
+	if response1.Domain != response2.Domain {
+		t.Errorf("Domain mismatch: %v != %v", response1.Domain, response2.Domain)
+	}
+
+	if response1.ValidDomain != response2.ValidDomain {
+		t.Errorf("ValidDomain mismatch: %v != %v", response1.ValidDomain, response2.ValidDomain)
+	}
+
+	if response1.BlackListed != response2.BlackListed {
+		t.Errorf("BlackListed mismatch: %v != %v", response1.BlackListed, response2.BlackListed)
+	}
+
+	if response1.Status != response2.Status {
+		t.Errorf("Status mismatch: %v != %v", response1.Status, response2.Status)
+	}
+
+	// Compare BlackList maps
+	if len(response1.BlackList) != len(response2.BlackList) {
+		t.Errorf("BlackList length mismatch: %v != %v", len(response1.BlackList), len(response2.BlackList))
+	}
+
+	for bl, ips1 := range response1.BlackList {
+		ips2, found := response2.BlackList[bl]
+		if !found {
+			t.Errorf("Blacklist %s found in first response but not in second", bl)
+			continue
+		}
+
+		if len(ips1) != len(ips2) {
+			t.Errorf("IP count mismatch for blacklist %s: %v != %v", bl, len(ips1), len(ips2))
+			continue
+		}
+
+		// Compare IPs (order might differ, so we check for presence)
+		for _, ip1 := range ips1 {
+			found := false
+			for _, ip2 := range ips2 {
+				if ip1.Equal(ip2) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("IP %v found in first response but not in second for blacklist %s", ip1, bl)
+			}
+		}
+	}
+
+	// Compare Errors
+	if len(response1.Errors) != len(response2.Errors) {
+		t.Errorf("Errors length mismatch: %v != %v", len(response1.Errors), len(response2.Errors))
+	}
+
+	t.Logf("Cache consistency verified for domain %s: BlackListed=%v, Cached: %v->%v",
+		testDomain, response1.BlackListed, response1.Cached, response2.Cached)
+}
+
+// Test to verify cache consistency for IP blacklist checks
+// Verifies that cached responses are identical to original responses except for Cached flag
+func TestIPBlacklistCacheConsistency(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
+
+	testIP := "127.0.0.4"
+
+	// First request - should not be cached
+	req1, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("First request failed with status %v", rr1.Code)
+	}
+
+	var response1 Ip
+	err := json.NewDecoder(rr1.Body).Decode(&response1)
+	if err != nil {
+		t.Fatalf("Failed to decode first response: %v", err)
+	}
+
+	// Verify IP is valid
+	if !response1.ValidIP {
+		t.Errorf("Expected ValidIP to be true, got false")
+	}
+
+	// Verify first response is not from cache
+	if response1.Cached {
+		t.Logf("Warning: First request was already cached (possible from previous test)")
+	}
+
+	// Second request - should be cached
+	req2, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("Second request failed with status %v", rr2.Code)
+	}
+
+	var response2 Ip
+	err = json.NewDecoder(rr2.Body).Decode(&response2)
+	if err != nil {
+		t.Fatalf("Failed to decode second response: %v", err)
+	}
+
+	// Verify second response is from cache
+	if !response2.Cached {
+		t.Errorf("Expected second request to be cached (Cached=true), got Cached=false")
+	}
+
+	// Compare all fields except Cached and TimeTaken
+	if response1.IP != response2.IP {
+		t.Errorf("IP mismatch: %v != %v", response1.IP, response2.IP)
+	}
+
+	if response1.ValidIP != response2.ValidIP {
+		t.Errorf("ValidIP mismatch: %v != %v", response1.ValidIP, response2.ValidIP)
+	}
+
+	if response1.BlackListed != response2.BlackListed {
+		t.Errorf("BlackListed mismatch: %v != %v", response1.BlackListed, response2.BlackListed)
+	}
+
+	if response1.Status != response2.Status {
+		t.Errorf("Status mismatch: %v != %v", response1.Status, response2.Status)
+	}
+
+	// Compare BlackList maps
+	if len(response1.BlackList) != len(response2.BlackList) {
+		t.Errorf("BlackList length mismatch: %v != %v", len(response1.BlackList), len(response2.BlackList))
+	}
+
+	for bl, ips1 := range response1.BlackList {
+		ips2, found := response2.BlackList[bl]
+		if !found {
+			t.Errorf("Blacklist %s found in first response but not in second", bl)
+			continue
+		}
+
+		if len(ips1) != len(ips2) {
+			t.Errorf("IP count mismatch for blacklist %s: %v != %v", bl, len(ips1), len(ips2))
+			continue
+		}
+
+		// Compare IPs (order might differ, so we check for presence)
+		for _, ip1 := range ips1 {
+			found := false
+			for _, ip2 := range ips2 {
+				if ip1.Equal(ip2) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("IP %v found in first response but not in second for blacklist %s", ip1, bl)
+			}
+		}
+	}
+
+	// Compare Errors
+	if len(response1.Errors) != len(response2.Errors) {
+		t.Errorf("Errors length mismatch: %v != %v", len(response1.Errors), len(response2.Errors))
+	}
+
+	t.Logf("Cache consistency verified for IP %s: BlackListed=%v, Cached: %v->%v",
+		testIP, response1.BlackListed, response1.Cached, response2.Cached)
+}
+
+// Test to verify cache deletion for domain blacklist checks
+// Verifies that after cache deletion, the next request is not from cache
+func TestDomainBlacklistCacheDeletion(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+
+	testDomain := "github.com"
+
+	// First request - populate cache
+	req1, _ := http.NewRequest("GET", "/domain/"+testDomain, nil)
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("First request failed with status %v", rr1.Code)
+	}
+
+	// Second request - should be cached
+	req2, _ := http.NewRequest("GET", "/domain/"+testDomain, nil)
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("Second request failed with status %v", rr2.Code)
+	}
+
+	var response2 Domain
+	json.NewDecoder(rr2.Body).Decode(&response2)
+
+	if !response2.Cached {
+		t.Logf("Warning: Second request was not cached (unexpected)")
+	}
+
+	// Clear cache
+	reqClear, _ := http.NewRequest("GET", "/clear-cache/"+testDomain, nil)
+	rrClear := httptest.NewRecorder()
+	r.ServeHTTP(rrClear, reqClear)
+
+	if rrClear.Code != http.StatusOK {
+		t.Fatalf("Cache clear request failed with status %v", rrClear.Code)
+	}
+
+	var clearResponse ClearCache
+	err := json.NewDecoder(rrClear.Body).Decode(&clearResponse)
+	if err != nil {
+		t.Fatalf("Failed to decode clear cache response: %v", err)
+	}
+
+	if !clearResponse.Status {
+		t.Errorf("Expected cache clear to succeed, got Status=false. Errors: %v", clearResponse.Errors)
+	}
+
+	// Third request - should NOT be cached after deletion
+	req3, _ := http.NewRequest("GET", "/domain/"+testDomain, nil)
+	rr3 := httptest.NewRecorder()
+	r.ServeHTTP(rr3, req3)
+
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("Third request failed with status %v", rr3.Code)
+	}
+
+	var response3 Domain
+	err = json.NewDecoder(rr3.Body).Decode(&response3)
+	if err != nil {
+		t.Fatalf("Failed to decode third response: %v", err)
+	}
+
+	// Verify third response is NOT from cache
+	if response3.Cached {
+		t.Errorf("Expected third request to NOT be cached after deletion (Cached=false), got Cached=true")
+	}
+
+	// Verify domain is still valid and checked correctly
+	if !response3.ValidDomain {
+		t.Errorf("Expected ValidDomain to be true, got false")
+	}
+
+	if !response3.Status {
+		t.Errorf("Expected Status to be true, got false. Errors: %v", response3.Errors)
+	}
+
+	t.Logf("Cache deletion verified for domain %s: Cached before deletion=%v, Cached after deletion=%v",
+		testDomain, response2.Cached, response3.Cached)
+}
+
+// Test to verify cache deletion for IP blacklist checks
+// Verifies that after cache deletion, the next request is not from cache
+func TestIPBlacklistCacheDeletion(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+
+	testIP := "127.0.0.4"
+
+	// First request - populate cache
+	req1, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("First request failed with status %v", rr1.Code)
+	}
+
+	// Second request - should be cached
+	req2, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("Second request failed with status %v", rr2.Code)
+	}
+
+	var response2 Ip
+	json.NewDecoder(rr2.Body).Decode(&response2)
+
+	if !response2.Cached {
+		t.Logf("Warning: Second request was not cached (unexpected)")
+	}
+
+	// Clear cache
+	reqClear, _ := http.NewRequest("GET", "/clear-cache/"+testIP, nil)
+	rrClear := httptest.NewRecorder()
+	r.ServeHTTP(rrClear, reqClear)
+
+	if rrClear.Code != http.StatusOK {
+		t.Fatalf("Cache clear request failed with status %v", rrClear.Code)
+	}
+
+	var clearResponse ClearCache
+	err := json.NewDecoder(rrClear.Body).Decode(&clearResponse)
+	if err != nil {
+		t.Fatalf("Failed to decode clear cache response: %v", err)
+	}
+
+	if !clearResponse.Status {
+		t.Errorf("Expected cache clear to succeed, got Status=false. Errors: %v", clearResponse.Errors)
+	}
+
+	// Third request - should NOT be cached after deletion
+	req3, _ := http.NewRequest("GET", "/ip/"+testIP, nil)
+	rr3 := httptest.NewRecorder()
+	r.ServeHTTP(rr3, req3)
+
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("Third request failed with status %v", rr3.Code)
+	}
+
+	var response3 Ip
+	err = json.NewDecoder(rr3.Body).Decode(&response3)
+	if err != nil {
+		t.Fatalf("Failed to decode third response: %v", err)
+	}
+
+	// Verify third response is NOT from cache
+	if response3.Cached {
+		t.Errorf("Expected third request to NOT be cached after deletion (Cached=false), got Cached=true")
+	}
+
+	// Verify IP is still valid and checked correctly
+	if !response3.ValidIP {
+		t.Errorf("Expected ValidIP to be true, got false")
+	}
+
+	if !response3.Status {
+		t.Errorf("Expected Status to be true, got false. Errors: %v", response3.Errors)
+	}
+
+	t.Logf("Cache deletion verified for IP %s: Cached before deletion=%v, Cached after deletion=%v",
+		testIP, response2.Cached, response3.Cached)
+}

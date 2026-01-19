@@ -117,9 +117,11 @@ type Health struct {
 	Alive            bool
 	Redis            bool
 	RedisConnections int
+	CachedItems      int
 	Uptime           time.Duration
 	GoVersion        string
 	Version          string
+	MemoryAlloc      uint64
 }
 
 // Struct for the root object (Help, main page)
@@ -279,10 +281,12 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		health.Redis = true
 		health.RedisConnections = getRedisConnections()
+		health.CachedItems = getRedisKeysCount()
 	}
 	uptime = time.Duration(time.Since(startTime).Seconds())
 	health.Alive = true
-	health = Health{Alive: health.Alive, Redis: health.Redis, RedisConnections: health.RedisConnections, Uptime: uptime, GoVersion: runtime.Version(), Version: version}
+	memAlloc, _ := MemUsage()
+	health = Health{Alive: health.Alive, Redis: health.Redis, RedisConnections: health.RedisConnections, CachedItems: health.CachedItems, Uptime: uptime, GoVersion: runtime.Version(), Version: version, MemoryAlloc: memAlloc}
 	json.NewEncoder(w).Encode(health)
 	// Log
 	logRequest("GET", http.StatusOK, "/health", "", "", errors, 0, false, "", health.Redis, health.RedisConnections)
