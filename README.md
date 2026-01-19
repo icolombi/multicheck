@@ -361,16 +361,17 @@ nameServers = """
 8.8.8.8
 """
 
+# Redis configuration
+redisHost = "127.0.0.1"
+redisPort = 6379
+redisDatabase = 0
+redisPassword = "" # Leave empty if no password is required
+
 # Listen port
 listenPort = ":8080"
 ```
 
 ### Environment Variables
-
-Configure Redis through variables in `credentialstore/credentialstore.go`:
-
-- `REDIS_HOST`: Redis server hostname (default: `localhost`)
-- `REDIS_PORT`: Redis port (default: `6379`)
 
 You can also specify a custom path for the configuration:
 
