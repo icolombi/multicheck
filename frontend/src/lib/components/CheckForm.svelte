@@ -227,7 +227,7 @@
 							<textarea
 								id="blacklists"
 								bind:value={customBlacklists}
-								placeholder="zen.spamhaus.org&#10;multi.uribl.com"
+								placeholder="zen.spamhaus.org&#10;bl.spamcop.net"
 								rows="4"
 								class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
 								disabled={loading}

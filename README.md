@@ -125,7 +125,8 @@ curl http://localhost:8080/ip/1.2.3.4
   "BlackList": {},
   "Errors": [],
   "TimeTaken": 0.245,
-  "Cached": false
+  "Cached": false,
+  "CacheKey": "1.2.3.4"
 }
 ```
 
@@ -154,7 +155,8 @@ curl http://localhost:8080/domain/example.com
   "BlackList": {},
   "Errors": [],
   "TimeTaken": 0.198,
-  "Cached": false
+  "Cached": false,
+  "CacheKey": "example.com"
 }
 ```
 
@@ -198,11 +200,12 @@ Checks an IP address against a custom list of blacklists, overriding the default
   "BlackList": {},
   "Errors": [],
   "TimeTaken": 0.312,
-  "Cached": false
+  "Cached": false,
+  "CacheKey": "post:ip:1.2.3.4:a3f5c8d12e9b7f6a"
 }
 ```
 
-**Note:** The `Cached` field will be `true` when the response is served from Redis cache. Requests with identical IP and blacklist array (regardless of order) will result in cache hits. The `nameservers` parameter does not affect cache keys since DNS results should be consistent across different nameservers.
+**Note:** The `Cached` field will be `true` when the response is served from Redis cache. The `CacheKey` field contains the Redis key used for caching - use this value with the `/clear-cache/{key}` endpoint to delete the cached entry. Requests with identical IP and blacklist array (regardless of order) will result in cache hits. The `nameservers` parameter does not affect cache keys since DNS results should be consistent across different nameservers.
 
 **Validation Rules:**
 
@@ -263,8 +266,15 @@ Content-Type: application/json
 
 Checks a domain against a custom list of blacklists, overriding the default configuration. Results are cached in Redis using a key format `post:domain:<domain>:<hash>` where the hash is generated from the sorted blacklist array.
 
+**Request Body:**
+
 ```json
-,
+{
+  "domain": "example.com",
+  "blacklists": [
+    "dbl.spamhaus.org",
+    "multi.uribl.com"
+  ],
   "nameservers": ["8.8.8.8", "1.1.1.1"]
 }
 ```
@@ -274,16 +284,6 @@ Checks a domain against a custom list of blacklists, overriding the default conf
 - `domain` (required): Domain to check
 - `blacklists` (required): Array of DNS blacklist domains to query
 - `nameservers` (optional): Array of custom DNS nameservers to use (default: uses config.toml nameservers)
-**Request Body:**
-
-```json
-{
-  "domain": "example.com",
-  "blacklists": [
-    "dbl.spamhaus.org",
-    "multi.uribl.com"
-  ]
-}
 ```
 
 **Response:**
@@ -297,15 +297,18 @@ Checks a domain against a custom list of blacklists, overriding the default conf
   "BlackList": {},
   "Errors": [],
   "TimeTaken": 0.245,
-  "Cached": false
-- `nameservers`: Same validation rules as IP check endpoint
+  "Cached": false,
+  "CacheKey": "post:domain:example.com:f7b2d9e4c1a8f563"
 }
 ```
+
+**Note:** The `CacheKey` field contains the Redis key used for caching - use this value with the `/clear-cache/{key}` endpoint to delete the cached entry.
 
 **Validation Rules:**
 
 - `domain`: Must be a valid domain name format
 - `blacklists`: Same validation rules as IP check endpoint
+- `nameservers`: Same validation rules as IP check endpoint
 
 **Error Responses:**
 
@@ -362,16 +365,16 @@ Removes a specific key from the Redis cache.
 **Examples:**
 
 ```bash
-# Clear GET endpoint cache
+# Clear GET endpoint cache (simple key)
 curl http://localhost:8080/clear-cache/1.2.3.4
 curl http://localhost:8080/clear-cache/example.com
 
-# Clear POST endpoint cache (requires full key with hash)
+# Clear POST endpoint cache using CacheKey from response
 curl http://localhost:8080/clear-cache/post:ip:1.2.3.4:a3f5c8d12e9b7f6a
 curl http://localhost:8080/clear-cache/post:domain:example.com:f7b2d9e4c1a8f563
 ```
 
-**Note:** For POST endpoint caches, you need to provide the complete cache key including the hash. The hash is generated from the sorted blacklist array used in the original request.
+**Note:** All API responses include a `CacheKey` field containing the exact Redis key used for caching. Use this value directly with the `/clear-cache/{key}` endpoint to delete cached entries. For POST endpoints, the cache key includes a hash generated from the sorted blacklist array.
 
 ## ⚙️ Configuration
 

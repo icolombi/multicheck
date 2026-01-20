@@ -28,15 +28,22 @@
 	}
 
 	async function handleClearCache() {
-		const key = checkType === 'ip' ? (result as IpResponse).IP : (result as DomainResponse).Domain;
+		// Use CacheKey from API response instead of constructing manually
+		const cacheKey = result.CacheKey;
+		const displayKey = checkType === 'ip' ? (result as IpResponse).IP : (result as DomainResponse).Domain;
 		
-		if (!confirm(`Clear cache for ${key}?`)) {
+		if (!cacheKey) {
+			toast.error('No cache key available');
+			return;
+		}
+		
+		if (!confirm(`Clear cache for ${displayKey}?`)) {
 			return;
 		}
 
 		clearingCache = true;
 		try {
-			await clearCache(key);
+			await clearCache(cacheKey);
 			toast.success('Cache cleared successfully');
 		} catch (error) {
 			toast.error('Failed to clear cache');
@@ -123,6 +130,27 @@
 			</span>
 		</div>
 	</div>
+
+	<!-- Cache Key (collapsible detail for advanced users) -->
+	{#if result.CacheKey}
+		<details class="text-xs">
+			<summary class="cursor-pointer text-muted-foreground hover:text-foreground transition-colors">
+				Cache Key
+			</summary>
+			<div class="mt-2 rounded border border-border bg-muted/50 p-2">
+				<div class="flex items-center justify-between gap-2">
+					<code class="font-mono text-xs break-all">{result.CacheKey}</code>
+					<button
+						onclick={() => copyToClipboard(result.CacheKey)}
+						class="shrink-0 rounded p-1 hover:bg-accent transition-colors"
+						title="Copy cache key"
+					>
+						<Copy class="h-3 w-3" />
+					</button>
+				</div>
+			</div>
+		</details>
+	{/if}
 
 	<!-- Blacklist Results -->
 	{#if result.BlackListed && Object.keys(result.BlackList).length > 0}

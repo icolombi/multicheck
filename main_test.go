@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -535,6 +536,246 @@ func TestPostCheckIP(t *testing.T) {
 	if len(response.Errors) > 0 {
 		t.Logf("Errors reported: %v", response.Errors)
 	}
+}
+
+// Test to verify that POST /ip/check returns correct CacheKey
+func TestPostCheckIpCacheKey(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
+
+	// Prepare request body
+	requestBody := CheckIpRequest{
+		IP:         "2.0.0.127",
+		Blacklists: []string{"zen.spamhaus.org", "bl.spamcop.net"},
+	}
+	bodyBytes, _ := json.Marshal(requestBody)
+
+	// First request - should not be cached
+	req1, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
+	req1.Header.Set("Content-Type", "application/json")
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("First request failed with status %v", rr1.Code)
+	}
+
+	var response1 Ip
+	json.NewDecoder(rr1.Body).Decode(&response1)
+
+	// Check that CacheKey is present
+	if response1.CacheKey == "" {
+		t.Errorf("Expected CacheKey to be present, got empty string")
+	}
+
+	// Check that CacheKey has correct format: post:ip:<ip>:<hash>
+	if !strings.HasPrefix(response1.CacheKey, "post:ip:") {
+		t.Errorf("Expected CacheKey to start with 'post:ip:', got %s", response1.CacheKey)
+	}
+
+	if !strings.Contains(response1.CacheKey, requestBody.IP) {
+		t.Errorf("Expected CacheKey to contain IP %s, got %s", requestBody.IP, response1.CacheKey)
+	}
+
+	// Check that hash part exists (format: post:ip:<ip>:<16-char-hash>)
+	parts := strings.Split(response1.CacheKey, ":")
+	if len(parts) != 4 {
+		t.Errorf("Expected CacheKey to have 4 parts separated by ':', got %d parts: %s", len(parts), response1.CacheKey)
+	} else if len(parts[3]) != 16 {
+		t.Errorf("Expected hash part to be 16 characters, got %d: %s", len(parts[3]), parts[3])
+	}
+
+	// Second request with same parameters - should be cached with same CacheKey
+	req2, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("Second request failed with status %v", rr2.Code)
+	}
+
+	var response2 Ip
+	json.NewDecoder(rr2.Body).Decode(&response2)
+
+	// Check that second response has same CacheKey
+	if response2.CacheKey != response1.CacheKey {
+		t.Errorf("Expected same CacheKey for identical requests: %s != %s", response1.CacheKey, response2.CacheKey)
+	}
+
+	// Check that second response is from cache
+	if !response2.Cached {
+		t.Errorf("Expected second request to be cached")
+	}
+
+	t.Logf("CacheKey verified: %s (Cached: %v -> %v)", response1.CacheKey, response1.Cached, response2.Cached)
+}
+
+// Test to verify that POST /domain/check returns correct CacheKey
+func TestPostCheckDomainCacheKey(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
+
+	// Prepare request body
+	requestBody := CheckDomainRequest{
+		Domain:     "test.uribl.com",
+		Blacklists: []string{"multi.uribl.com"},
+	}
+	bodyBytes, _ := json.Marshal(requestBody)
+
+	// First request - should not be cached
+	req1, _ := http.NewRequest("POST", "/domain/check", bytes.NewBuffer(bodyBytes))
+	req1.Header.Set("Content-Type", "application/json")
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("First request failed with status %v", rr1.Code)
+	}
+
+	var response1 Domain
+	json.NewDecoder(rr1.Body).Decode(&response1)
+
+	// Check that CacheKey is present
+	if response1.CacheKey == "" {
+		t.Errorf("Expected CacheKey to be present, got empty string")
+	}
+
+	// Check that CacheKey has correct format: post:domain:<domain>:<hash>
+	if !strings.HasPrefix(response1.CacheKey, "post:domain:") {
+		t.Errorf("Expected CacheKey to start with 'post:domain:', got %s", response1.CacheKey)
+	}
+
+	if !strings.Contains(response1.CacheKey, requestBody.Domain) {
+		t.Errorf("Expected CacheKey to contain domain %s, got %s", requestBody.Domain, response1.CacheKey)
+	}
+
+	// Check that hash part exists (format: post:domain:<domain>:<16-char-hash>)
+	parts := strings.Split(response1.CacheKey, ":")
+	if len(parts) != 4 {
+		t.Errorf("Expected CacheKey to have 4 parts separated by ':', got %d parts: %s", len(parts), response1.CacheKey)
+	} else if len(parts[3]) != 16 {
+		t.Errorf("Expected hash part to be 16 characters, got %d: %s", len(parts[3]), parts[3])
+	}
+
+	// Second request with same parameters - should be cached with same CacheKey
+	req2, _ := http.NewRequest("POST", "/domain/check", bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("Second request failed with status %v", rr2.Code)
+	}
+
+	var response2 Domain
+	json.NewDecoder(rr2.Body).Decode(&response2)
+
+	// Check that second response has same CacheKey
+	if response2.CacheKey != response1.CacheKey {
+		t.Errorf("Expected same CacheKey for identical requests: %s != %s", response1.CacheKey, response2.CacheKey)
+	}
+
+	// Check that second response is from cache
+	if !response2.Cached {
+		t.Errorf("Expected second request to be cached")
+	}
+
+	t.Logf("CacheKey verified: %s (Cached: %v -> %v)", response1.CacheKey, response1.Cached, response2.Cached)
+}
+
+// Test to verify that cache deletion works with POST endpoint CacheKey
+func TestPostCheckIpCacheDeletionWithCacheKey(t *testing.T) {
+	setupTestWithResolver()
+
+	if len(nameservers) == 0 {
+		t.Fatal("No nameservers configured in config.toml")
+	}
+
+	r := mux.NewRouter()
+	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+
+	// Prepare request body
+	requestBody := CheckIpRequest{
+		IP:         "2.0.0.127",
+		Blacklists: []string{"zen.spamhaus.org"},
+	}
+	bodyBytes, _ := json.Marshal(requestBody)
+
+	// First request - populate cache
+	req1, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
+	req1.Header.Set("Content-Type", "application/json")
+	rr1 := httptest.NewRecorder()
+	r.ServeHTTP(rr1, req1)
+
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("First request failed with status %v", rr1.Code)
+	}
+
+	var response1 Ip
+	json.NewDecoder(rr1.Body).Decode(&response1)
+
+	if response1.CacheKey == "" {
+		t.Fatalf("Expected CacheKey to be present")
+	}
+
+	// Second request - should be cached
+	req2, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	rr2 := httptest.NewRecorder()
+	r.ServeHTTP(rr2, req2)
+
+	var response2 Ip
+	json.NewDecoder(rr2.Body).Decode(&response2)
+
+	if !response2.Cached {
+		t.Logf("Warning: Second request was not cached (unexpected)")
+	}
+
+	// Clear cache using CacheKey from response
+	reqClear, _ := http.NewRequest("GET", "/clear-cache/"+response1.CacheKey, nil)
+	rrClear := httptest.NewRecorder()
+	r.ServeHTTP(rrClear, reqClear)
+
+	if rrClear.Code != http.StatusOK {
+		t.Fatalf("Cache clear request failed with status %v", rrClear.Code)
+	}
+
+	var clearResponse ClearCache
+	json.NewDecoder(rrClear.Body).Decode(&clearResponse)
+
+	if !clearResponse.Status {
+		t.Errorf("Expected cache clear to succeed, got Status=false. Errors: %v", clearResponse.Errors)
+	}
+
+	// Third request - should NOT be cached after deletion
+	req3, _ := http.NewRequest("POST", "/ip/check", bytes.NewBuffer(bodyBytes))
+	req3.Header.Set("Content-Type", "application/json")
+	rr3 := httptest.NewRecorder()
+	r.ServeHTTP(rr3, req3)
+
+	var response3 Ip
+	json.NewDecoder(rr3.Body).Decode(&response3)
+
+	if response3.Cached {
+		t.Errorf("Expected third request to NOT be cached after deletion, got Cached=true")
+	}
+
+	t.Logf("Cache deletion with CacheKey verified: %s (Cached: %v -> deleted -> %v)",
+		response1.CacheKey, response2.Cached, response3.Cached)
 }
 
 // Test to verify that GET / returns the endpoint list

@@ -76,6 +76,7 @@ type Ip struct {
 	Errors      []string            // List of errors
 	TimeTaken   float64             // Time taken
 	Cached      bool                // From Redis?
+	CacheKey    string              // Redis cache key used
 }
 
 // Struct for the request body of POST /ip/check
@@ -95,6 +96,7 @@ type Domain struct {
 	Errors      []string            // List of errors
 	TimeTaken   float64             // Time taken
 	Cached      bool                // From Redis?
+	CacheKey    string              // Redis cache key used
 }
 
 // Struct for the request body of POST /domain/check
@@ -363,6 +365,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		BlackListed: ip.BlackListed,
 		BlackList:   ip.BlackList,
 		Status:      ip.Status,
+		CacheKey:    ipAddress,
 		Errors:      errors}
 	//fmt.Println(json.Marshal(ip))
 	// If IP is not in cache AND IP is valid, save to Redis
@@ -449,6 +452,7 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		BlackListed: domain.BlackListed,
 		BlackList:   domain.BlackList,
 		Status:      domain.Status,
+		CacheKey:    domainName,
 		Errors:      errors}
 
 	// If domain is not in cache AND domain is valid, save to Redis
@@ -586,6 +590,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		// Found in cache
 		json.Unmarshal([]byte(value), &ip)
 		ip.Cached = true
+		ip.CacheKey = cacheKey
 		elapsed := time.Since(start).Seconds()
 		ip.TimeTaken = elapsed
 		json.NewEncoder(w).Encode(ip)
@@ -611,6 +616,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		BlackListed: ip.BlackListed,
 		BlackList:   ip.BlackList,
 		Status:      true,
+		CacheKey:    cacheKey,
 		Errors:      errors,
 	}
 
@@ -747,6 +753,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		// Found in cache
 		json.Unmarshal([]byte(value), &domain)
 		domain.Cached = true
+		domain.CacheKey = cacheKey
 		elapsed := time.Since(start).Seconds()
 		domain.TimeTaken = elapsed
 		json.NewEncoder(w).Encode(domain)
@@ -772,6 +779,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		BlackListed: domain.BlackListed,
 		BlackList:   domain.BlackList,
 		Status:      true,
+		CacheKey:    cacheKey,
 		Errors:      errors,
 	}
 

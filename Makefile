@@ -6,6 +6,7 @@ help:
 	@echo "  make run            - Run the multicheck binary and format output with jq"
 	@echo "  make test           - Run tests for the multicheck package (verbose with colors)"
 	@echo "  make test-quiet     - Run tests with summary only (minimal output)"
+	@echo "  make test-cache-key - Run cache key integration tests"
 	@echo ""
 	@echo "Frontend:"
 	@echo "  make install-frontend - Install frontend dependencies"
@@ -69,3 +70,8 @@ run-frontend:
 build-frontend:
 	@echo "Building frontend for production..."
 	@cd frontend && npm run build
+
+# Integration test for cache key functionality
+test-cache-key:
+	@echo "Running cache key integration tests..."
+	@./test-cache-key.sh

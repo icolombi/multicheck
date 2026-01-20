@@ -9,6 +9,7 @@ export interface IpResponse {
 	Errors: string[];
 	TimeTaken: number;
 	Cached: boolean;
+	CacheKey: string;
 }
 
 export interface DomainResponse {
@@ -20,6 +21,7 @@ export interface DomainResponse {
 	Errors: string[];
 	TimeTaken: number;
 	Cached: boolean;
+	CacheKey: string;
 }
 
 export interface CheckIpRequest {
