@@ -25,7 +25,6 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 - **[main.go](../main.go)** - HTTP server with Gorilla Mux router, defines all API endpoints and request handlers
 - **[functions.go](../functions.go)** - DNS blacklist checking logic with concurrent goroutines and WaitGroups
 - **[db.go](../db.go)** - Redis connection pool management using redigo
-- **[credentialstore/](../credentialstore/)** - Environment-based config for Redis (REDIS_HOST, REDIS_PORT)
 - **[config.toml](../config.toml)** - Blacklist configuration, cache TTL, nameservers, listen port: the configuration file
 
 ### Data Flow

@@ -54,7 +54,7 @@ To change the API endpoint, edit `vite.config.ts`.
 
 ## Project Structure
 
-```
+```txt
 src/
 ├── lib/
 │   ├── components/
@@ -84,6 +84,7 @@ src/
 ### View Results
 
 Results show:
+
 - ✓/✗ Status (blacklisted or clean)
 - Response time and cache status
 - List of blacklists with detections
@@ -99,6 +100,7 @@ Results show:
 ### Health Dashboard
 
 Visit `/health` to see:
+
 - API online status
 - Redis connection status
 - System uptime
