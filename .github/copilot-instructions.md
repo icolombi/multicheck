@@ -12,9 +12,12 @@
 - Every input must be validated and sanitized to prevent injection attacks and resource exhaustion
 - Use context-aware logging with structured JSON output for easy parsing
 - Write unit tests for all new functionality and edge cases
+- Security First: Always consider security implications of changes, especially for input handling and external dependencies
 
 ## Project Overview
 Multicheck is a Go-based REST API service that checks domain and IP reputation against DNS-based blacklists (DNSBL). It uses Redis for caching results and provides concurrent DNS lookups for fast blacklist checking.
+
+**The project includes a modern web frontend** built with SvelteKit, TypeScript, and Tailwind CSS located in the `frontend/` directory.
 
 ## Architecture
 
@@ -201,3 +204,85 @@ Package-level variables: `ip`, `domain`, `health`, `clearCache`, `configuration`
 
 ### IP Reversal for DNSBL
 IPs must be reversed for DNSBL queries: `1.2.3.4` becomes `4.3.2.1.dnsbl.example.org`. See `reverseIP()` function.
+
+## Frontend Architecture
+
+### Directory Structure
+The `frontend/` directory contains a SvelteKit 5 application with the following structure:
+- **src/lib/** - Shared code and components
+  - `api.ts` - API client functions with fetch wrappers
+  - `types.ts` - TypeScript interfaces matching Go API responses
+  - `validators.ts` - Zod schemas for input validation
+  - **components/** - Svelte components
+    - `CheckForm.svelte` - Main form with IP/domain input, validation, and advanced options
+    - `ResultsCard.svelte` - Displays check results with blacklist details
+    - `HistoryPanel.svelte` - Sidebar with recent checks (max 20 items in state)
+- **src/routes/** - SvelteKit pages
+  - `+layout.svelte` - App shell with header, navigation, dark mode toggle
+  - `+page.svelte` - Home page with CheckForm and HistoryPanel
+  - `health/+page.svelte` - Health dashboard with auto-refresh (5s interval)
+- **Configuration files:**
+  - `vite.config.ts` - Vite dev server with API proxy (`/api/*` → `http://localhost:8080`)
+  - `tailwind.config.js` - Tailwind with custom color tokens for dark/light themes
+  - `svelte.config.js` - SvelteKit adapter configuration
+
+### Frontend Tech Stack
+- **SvelteKit 5** - Framework with file-based routing and SSR support
+- **Svelte 5 Runes** - Modern reactive syntax (`$state`, `$effect`, `$props`)
+- **TypeScript** - Strict mode enabled for type safety
+- **Tailwind CSS** - Utility-first CSS with dark mode support (`class` strategy)
+- **Lucide Svelte** - Icon library (open source, MIT licensed)
+- **Svelte Sonner** - Toast notifications (success/error feedback)
+- **Zod** - Runtime validation for user inputs
+
+### Frontend Key Patterns
+
+#### State Management
+- Component-level state using Svelte 5 runes (`$state`, `$effect`)
+- No global state management needed (small app)
+- History items stored in parent component state (max 20 items)
+- Dark mode preference stored in localStorage
+
+#### API Communication
+- All API calls go through functions in `src/lib/api.ts`
+- Development: Vite proxy routes `/api/*` to backend (avoids CORS)
+- Production: Configure proxy or serve frontend from same domain as API
+- Error handling with try/catch and toast notifications
+
+#### Form Validation
+- Real-time validation using Zod schemas
+- Visual feedback with error messages and border colors
+- Validates IP format (4 octets, 0-255 range) and domain format (DNS standard)
+- Custom blacklist/nameserver validation (count limits, format checks)
+
+#### Component Communication
+- Props passed down: `{selectedItem}` and callbacks like `onCheckComplete()`
+- Parent component manages history state and selection
+- Child components emit events via callback props
+
+### Frontend Development Workflow
+
+```bash
+cd frontend
+npm install              # First time: install dependencies
+npm run dev              # Start dev server on http://localhost:5173
+npm run build            # Production build
+npm run preview          # Test production build
+npm run check            # TypeScript type checking
+npm run format           # Format code with Prettier
+```
+
+### Frontend-Backend Integration
+- Frontend expects backend API on `http://localhost:8080`
+- Vite dev server proxies `/api/*` requests to backend
+- API responses match TypeScript interfaces in `src/lib/types.ts`
+- Frontend handles both GET (default blacklists) and POST (custom blacklists) endpoints
+
+### When Working on Frontend
+- Always update TypeScript types if API response structure changes
+- Follow Svelte 5 runes syntax (avoid legacy `let` with `$:` reactivity)
+- Use Tailwind utility classes (avoid custom CSS unless necessary)
+- Test dark mode for all new UI components
+- Keep components small and focused (CheckForm, ResultsCard, HistoryPanel pattern)
+- Add comments for complex reactive logic using `$effect()`
+- Validate all user inputs before sending to API

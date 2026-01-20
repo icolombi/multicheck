@@ -2,7 +2,11 @@
 
 Multicheck is a high-performance REST API service written in Go to check the reputation of domains and IP addresses against DNS blacklists (DNSBL). The service uses concurrent DNS lookups to query multiple blacklists simultaneously and implements a Redis caching system to optimize response times.
 
+**Includes a modern SvelteKit web frontend** for easy interaction with the API through a beautiful, responsive interface.
+
 ## 📋 Key Features
+
+### Backend API
 
 - **IP Verification**: Checks IP addresses against configurable DNS blacklists (DNSBL)
 - **Domain Verification**: Checks domains against specialized domain blacklists
@@ -14,25 +18,45 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 - **JSON Logging**: Structured logs in JSON format for easy parsing and analysis
 - **Custom DNS Resolver**: Uses configurable nameservers to avoid local DNS limitations
 
+### Web Frontend
+
+- **Modern UI**: Built with SvelteKit, Tailwind CSS, and TypeScript
+- **Real-time Validation**: Instant feedback on IP/domain input
+- **Dark/Light Mode**: Automatic theme switching with localStorage persistence
+- **Check History**: Keep track of recent checks with quick re-check functionality
+- **Advanced Options**: Custom blacklists and nameservers configuration
+- **Health Dashboard**: Real-time monitoring of API and Redis status
+- **Responsive Design**: Mobile-first design that works on all devices
+- **Copy to Clipboard**: Easy copying of results and JSON responses
+
 ## 🚀 Quick Start
 
 ### Prerequisites
+
+**Backend:**
 
 - Go 1.25+
 - Redis server
 - Docker (optional)
 
+**Frontend (optional):**
+
+- Node.js 18+
+- npm
+
 ### Installation and Startup
 
-#### With Docker Compose
+#### Backend API Only
+
+**With Docker Compose:**
 
 ```bash
 docker-compose up
 ```
 
-The service will be available at `http://localhost:8080`
+The API will be available at `http://localhost:8080`
 
-#### Manual Build
+**Manual Build:**
 
 ```bash
 # Build
@@ -43,6 +67,24 @@ make run
 
 # Test
 make test
+```
+
+#### Frontend Web Interface
+
+```bash
+cd frontend
+npm install          # First time: install dependencies
+npm run dev          # Start development server
+```
+
+The frontend will be available at `http://localhost:5173` and will automatically proxy API requests to the backend.
+
+**Production build:**
+
+```bash
+cd frontend
+npm run build        # Compile for production
+npm run preview      # Preview production build
 ```
 
 ## 📡 API Endpoints
@@ -500,6 +542,55 @@ The `podman-compose.sh` script is also available for use with Podman:
 - `curl.sh`: Script with curl request examples
 - `health.sh`: Script for quick health check
 - `ips.txt` / `domains.txt`: Example files with lists of IPs/domains to test
+
+## 🖥️ Frontend Directory Structure
+
+The `frontend/` directory contains a complete SvelteKit application:
+
+```txt
+frontend/
+├── src/
+│   ├── lib/
+│   │   ├── api.ts                 # API client functions
+│   │   ├── types.ts               # TypeScript interfaces
+│   │   ├── validators.ts          # Zod validation schemas
+│   │   └── components/
+│   │       ├── CheckForm.svelte   # Main form with IP/domain input
+│   │       ├── ResultsCard.svelte # Results display component
+│   │       └── HistoryPanel.svelte# Recent checks sidebar
+│   ├── routes/
+│   │   ├── +layout.svelte         # App layout with header/nav
+│   │   ├── +page.svelte           # Home page (check interface)
+│   │   └── health/
+│   │       └── +page.svelte       # Health dashboard
+│   └── app.css                    # Global styles (Tailwind)
+├── package.json                   # Dependencies and scripts
+├── vite.config.ts                 # Vite config with API proxy
+├── tailwind.config.js             # Tailwind CSS configuration
+└── README.md                      # Frontend-specific documentation
+```
+
+**Key Frontend Commands:**
+
+```bash
+cd frontend
+npm install          # Install dependencies (~2-3 minutes first time)
+npm run dev          # Development server with hot-reload
+npm run build        # Production build
+npm run preview      # Test production build
+npm run check        # TypeScript type checking
+npm run format       # Format code with Prettier
+```
+
+**Frontend Features:**
+
+- API proxy configured in `vite.config.ts` (`/api/*` → `http://localhost:8080`)
+- Dark/light mode toggle with localStorage persistence
+- Real-time form validation using Zod schemas
+- Toast notifications for user feedback (svelte-sonner)
+- Responsive design with Tailwind CSS utility classes
+- Recent checks stored in component state (last 20 items)
+- Health dashboard with auto-refresh every 5 seconds
 
 ## 🤝 Contributing
 
