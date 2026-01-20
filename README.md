@@ -71,21 +71,24 @@ make test
 
 #### Frontend Web Interface
 
+**Using Make (recommended):**
+
+```bash
+make install-frontend  # First time: install dependencies
+make run-frontend      # Start development server
+make build-frontend    # Build for production
+```
+
+**Or using npm directly:**
+
 ```bash
 cd frontend
 npm install          # First time: install dependencies
 npm run dev          # Start development server
+npm run build        # Build for production
 ```
 
 The frontend will be available at `http://localhost:5173` and will automatically proxy API requests to the backend.
-
-**Production build:**
-
-```bash
-cd frontend
-npm run build        # Compile for production
-npm run preview      # Preview production build
-```
 
 ## 📡 API Endpoints
 
@@ -539,6 +542,7 @@ The `podman-compose.sh` script is also available for use with Podman:
 
 ## 📝 Utility Files
 
+- `Makefile`: Build automation with commands for backend, frontend, and Docker/Podman
 - `curl.sh`: Script with curl request examples
 - `health.sh`: Script for quick health check
 - `ips.txt` / `domains.txt`: Example files with lists of IPs/domains to test
@@ -571,6 +575,16 @@ frontend/
 ```
 
 **Key Frontend Commands:**
+
+**Using Make:**
+
+```bash
+make install-frontend  # Install dependencies (~2-3 minutes first time)
+make run-frontend      # Development server with hot-reload
+make build-frontend    # Production build
+```
+
+**Using npm directly:**
 
 ```bash
 cd frontend
