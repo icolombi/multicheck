@@ -1,14 +1,22 @@
 .DEFAULT_GOAL := help
 help:
 	@echo "Available commands:"
-	@echo "  make build    - Build the multicheck binary"
-	@echo "  make run      - Run the multicheck binary and format output with jq"
-	@echo "  make test     - Run tests for the multicheck package (verbose with colors)"
-	@echo "  make test-quiet - Run tests with summary only (minimal output)"
-	@echo "  make build-compose - Build and start the podman-compose services"
-	@echo "  make start    - Start the podman-compose services"
-	@echo "  make stop     - Stop the podman-compose services"
-	@echo "  make logs     - Follow logs from running containers"
+	@echo "Backend:"
+	@echo "  make build          - Build the multicheck binary"
+	@echo "  make run            - Run the multicheck binary and format output with jq"
+	@echo "  make test           - Run tests for the multicheck package (verbose with colors)"
+	@echo "  make test-quiet     - Run tests with summary only (minimal output)"
+	@echo ""
+	@echo "Frontend:"
+	@echo "  make install-frontend - Install frontend dependencies"
+	@echo "  make run-frontend     - Start frontend development server"
+	@echo "  make build-frontend   - Build frontend for production"
+	@echo ""
+	@echo "Docker/Podman:"
+	@echo "  make build-compose  - Build and start the podman-compose services (backend + redis)"
+	@echo "  make start          - Start the podman-compose services"
+	@echo "  make stop           - Stop the podman-compose services"
+	@echo "  make logs           - Follow logs from running containers"
 build:
 	@go build -o ./bin/multicheck
 	@strip ./bin/multicheck
@@ -46,3 +54,18 @@ start:
 	@podman-compose up
 stop:
 	@podman-compose down
+logs:
+	@podman-compose logs -f
+
+# Frontend targets
+install-frontend:
+	@echo "Installing frontend dependencies..."
+	@cd frontend && npm install
+
+run-frontend:
+	@echo "Starting frontend development server..."
+	@cd frontend && npm run dev
+
+build-frontend:
+	@echo "Building frontend for production..."
+	@cd frontend && npm run build
