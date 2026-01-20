@@ -6,6 +6,15 @@
   - Code comments (explain why, not just what)
   - README.md (for user-facing features)
   - CHANGELOG files (when present)
+  - ARCHITECTURE.md (for design/architecture changes)
+- Use consistent formatting (gofmt for Go, Prettier for JS/TS)
+- Write clear, descriptive commit messages following Conventional Commits:
+  - Format: `<type>(<scope>): <description>`
+  - Example: `feat(api): add POST /ip/check endpoint for custom blacklists`
+- Types and interfaces MUST have clear, descriptive names
+- Functions should be small, single-responsibility, and well-named
+- Use idiomatic patterns for the language (e.g., error handling in Go)
+- Ensure proper input validation and error handling throughout
   - Git commit messages (clear and descriptive)
 - Follow Go best practices and idiomatic patterns
 - Use structured error handling with descriptive messages
