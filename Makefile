@@ -12,9 +12,10 @@ help:
 	@echo "  make install-frontend - Install frontend dependencies"
 	@echo "  make run-frontend     - Start frontend development server"
 	@echo "  make build-frontend   - Build frontend for production"
+	@echo "  make preview-frontend - Preview production build locally"
 	@echo ""
 	@echo "Docker/Podman:"
-	@echo "  make build-compose  - Build and start the podman-compose services (backend + redis)"
+	@echo "  make build-compose  - Build and start the podman-compose services (backend + redis)"	
 	@echo "  make start          - Start the podman-compose services"
 	@echo "  make stop           - Stop the podman-compose services"
 	@echo "  make logs           - Follow logs from running containers"
@@ -51,6 +52,7 @@ test-quiet:
 build-compose:
 	@export PODMAN_IGNORE_CGROUPSV1_WARNING=1 && \
 	podman-compose up --build --force-recreate
+
 start:
 	@podman-compose up
 stop:
@@ -70,6 +72,10 @@ run-frontend:
 build-frontend:
 	@echo "Building frontend for production..."
 	@cd frontend && npm run build
+
+preview-frontend:
+	@echo "Starting frontend preview server (production build)..."
+	@cd frontend && npm run preview
 
 # Integration test for cache key functionality
 test-cache-key:

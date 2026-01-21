@@ -63,7 +63,7 @@ The POST endpoints `/ip/check` and `/domain/check` allow clients to override the
 **Security and Validation:**
 
 - **Input validation**: Strict validation of IP/domain format, blacklist DNS syntax, and nameserver IPs
-- **Resource protection**: 
+- **Resource protection**:
   - Configurable maximum blacklists (default 20 via `maxCustomBlacklists`)
   - Configurable maximum nameservers (default 3 via `maxCustomNameservers`)
   - Maximum request body size (default 1MB via `maxRequestBodySize`)
@@ -504,6 +504,7 @@ frontend/
 #### CheckForm.svelte
 
 Main form component that handles:
+
 - IP/domain input with real-time validation (Zod schemas)
 - Tab switching between IP and Domain checks
 - Advanced Options (collapsible):
@@ -514,6 +515,7 @@ Main form component that handles:
 - Integration with history tracking
 
 **Validation:**
+
 - IP: 4 octets, each 0-255 range
 - Domain: Standard DNS format validation
 - Real-time error messages with visual feedback
@@ -521,6 +523,7 @@ Main form component that handles:
 #### ResultsCard.svelte
 
 Displays check results with:
+
 - Status indicator (✓ Clean / ✗ Blacklisted)
 - Response time and cache status
 - Blacklist detections with IP codes (expandable)
@@ -531,6 +534,7 @@ Displays check results with:
   - Clear cache button (uses `CacheKey` from API response)
 
 **Cache Key Integration (since January 20, 2026):**
+
 - Uses exact `CacheKey` field from API response
 - Fixes cache deletion for POST requests with custom blacklists
 - Displays cache key in collapsible section for transparency
@@ -538,6 +542,7 @@ Displays check results with:
 #### HistoryPanel.svelte
 
 Recent checks sidebar (max 20 items) with:
+
 - Chronological list of recent checks
 - Click to reload previous check
 - Visual status indicators (icons + colors)
@@ -560,6 +565,7 @@ async function clearCache(key: string): Promise<{ Status: boolean; Errors: strin
 ```
 
 **Configuration:**
+
 - All requests go through `/api/*` prefix
 - Development: Vite proxy routes to `http://localhost:8080`
 - Production: Configure reverse proxy or serve from same domain
@@ -618,6 +624,7 @@ npm run format           # Format code with Prettier
 ### API Proxy Configuration
 
 **Development** (`vite.config.ts`):
+
 ```typescript
 server: {
   proxy: {
@@ -631,6 +638,7 @@ server: {
 ```
 
 **Production:**
+
 - Configure Nginx/Apache reverse proxy
 - Or serve frontend from same domain as API
 - Or enable CORS on backend
@@ -662,6 +670,7 @@ const nameserverSchema = z.array(ipSchema).max(3).optional()
 ```
 
 **Validation feedback:**
+
 - Real-time validation on input change
 - Visual indicators (border colors, icons)
 - Error messages below fields
@@ -689,6 +698,7 @@ const nameserverSchema = z.array(ipSchema).max(3).optional()
 ### Health Dashboard (`/health`)
 
 Dedicated page for system monitoring:
+
 - API status with live indicator
 - Redis connectivity status
 - Cached items count
@@ -800,23 +810,27 @@ services:
 `main_test.go` includes comprehensive tests for:
 
 **Basic Functionality:**
+
 - Health check endpoint (`TestHealthCheckHandler`)
 - Redis connectivity verification
 - HTTP status codes for all endpoints
 - Root handler endpoint listing (`TestRootHandler`)
 
 **Blacklist Detection:**
+
 - IP blacklist detection with known blacklisted IP (`TestIPBlacklist`)
 - Domain blacklist detection with known blacklisted domain (`TestDomainBlacklist`)
 - Verification of specific DNSBL response codes (e.g., 127.0.0.2, 127.0.0.11, 127.0.0.14)
 - Clean IP/domain detection (no false positives)
 
 **POST Endpoints:**
+
 - Custom blacklist IP checking (`TestPostCheckIP`)
 - Custom blacklist domain checking (`TestPostCheckDomain`)
 - Custom nameserver support
 
 **Input Validation:**
+
 - Invalid IP format rejection (`TestGetIpInvalid`)
 - Invalid domain format rejection (`TestGetDomainInvalid`)
 - Empty blacklist array rejection
@@ -826,6 +840,7 @@ services:
 - Too-long input strings rejection
 
 **Caching:**
+
 - Cache hit verification (`TestGetIpCacheHit`, `TestGetDomainCacheHit`)
 - Cache consistency verification (identical responses)
 - Cache key format and exposure (`TestPostCheckIpCacheKey`, `TestPostCheckDomainCacheKey`)
@@ -833,6 +848,7 @@ services:
 - Cache independence (order, nameservers)
 
 **Test Utilities:**
+
 - Colored output with icons (▶ running, ✓ pass, ✗ fail)
 - Two modes:
   - `make test`: Verbose with full output and colors
@@ -842,6 +858,7 @@ services:
 ### Frontend Testing
 
 **Manual Testing:**
+
 - Real-time form validation
 - API endpoint switching (GET vs POST)
 - Cache key display and copy
@@ -988,18 +1005,21 @@ Usable for:
 ## Recent Changes
 
 ### January 20, 2026
+
 - Added `CacheKey` field to all API responses (backend + frontend)
 - Fixed cache deletion for POST endpoints with custom blacklists
 - Enhanced frontend ResultsCard with cache key display
 - Updated TypeScript interfaces to include CacheKey
 
 ### January 17, 2026
+
 - Implemented Redis caching for POST endpoints
 - Added hash-based cache key generation for custom blacklists
 - Cache independence from nameserver selection
 - Order-independent blacklist caching
 
 ### January 2026 (Custom Blacklists Feature)
+
 - Added POST endpoints for custom blacklist checking
 - Implemented comprehensive input validation
 - Added custom nameserver support
