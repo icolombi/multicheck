@@ -15,3 +15,4 @@ do
         curl -s https://lab.icolombi.net/multicheck/ip/$line | jq
     done < ips.txt
 done
+
