@@ -14,10 +14,10 @@ help:
 	@echo "  make build-frontend   - Build frontend for production"
 	@echo "  make preview-frontend - Preview production build locally"
 	@echo ""
-	@echo "Docker/Podman:"
-	@echo "  make build-compose  - Build and start the podman-compose services (backend + redis)"	
-	@echo "  make start          - Start the podman-compose services"
-	@echo "  make stop           - Stop the podman-compose services"
+	@echo "Docker/docker:"
+	@echo "  make build-compose  - Build and start the docker compose services (backend + redis)"	
+	@echo "  make start          - Start the docker compose services"
+	@echo "  make stop           - Stop the docker compose services"
 	@echo "  make logs           - Follow logs from running containers"
 build:
 	@go build -o ./bin/multicheck
@@ -50,15 +50,15 @@ test-quiet:
 		-e 's/^FAIL\t\(.*\)/\n\x1b[1;31m✗ FAIL\x1b[0m  \1\n/g'
 	
 build-compose:
-	@export PODMAN_IGNORE_CGROUPSV1_WARNING=1 && \
-	podman-compose up --build --force-recreate
+	@export docker_IGNORE_CGROUPSV1_WARNING=1 && \
+	docker compose up --build --force-recreate
 
 start:
-	@podman-compose up
+	@docker compose up
 stop:
-	@podman-compose down
+	@docker compose down
 logs:
-	@podman-compose logs -f
+	@docker compose logs -f
 
 # Frontend targets
 install-frontend:

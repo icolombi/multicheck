@@ -1,31 +1,32 @@
-FROM golang:1.25 AS builder
+FROM golang:1.26 AS builder
 
 WORKDIR /app
-COPY . .
-RUN go mod tidy && \
-    go get ./... && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ./bin/multicheck && \
+
+# Copia solo i file delle dipendenze prima per sfruttare la cache
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copia il codice sorgente e builda
+COPY *.go ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ./bin/multicheck && \
     strip ./bin/multicheck
 
 FROM alpine:latest
 
-# Crea utente non privilegiato
-RUN addgroup -g 1000 appgroup && \
-    adduser -D -u 1000 -G appgroup appuser
-
 WORKDIR /app
 
-# Copia file come root (owner: root:root)
+# Copia file dal builder
 COPY --from=builder --chown=root:root /app/bin/multicheck .
-COPY --from=builder --chown=root:root /app/config.toml .
+COPY --chown=root:root config.toml .
 
-# Rendi l'eseguibile executable ma non writable
-RUN chmod 755 /app/multicheck && \
+# Crea utente, imposta permessi in un singolo layer
+RUN addgroup -g 1000 appgroup && \
+    adduser -D -u 1000 -G appgroup appuser && \
+    chmod 755 /app/multicheck && \
     chmod 644 /app/config.toml
 
-# Passa all'utente non privilegiato
 USER appuser
 
-CMD ["./multicheck"]
-
 EXPOSE 8080
+
+CMD ["./multicheck"]
