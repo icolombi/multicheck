@@ -790,18 +790,29 @@ CMD ["./multicheck"]
 services:
   multicheck:
     build: .
-    ports:
-      - "8080:8080"
     depends_on:
-      - redis
+         valkey:
+            condition: service_healthy
     environment:
-      - REDIS_HOST=redis
+         - VALKEY_HOST=127.0.0.1
+         - VALKEY_PORT=6379
+      network_mode: host
   
-  redis:
-    image: redis:alpine
+   valkey:
+      image: docker.io/valkey/valkey:9
+      network_mode: host
+      command: valkey-server /usr/local/etc/valkey/valkey.conf
+      volumes:
+         - ./valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+      healthcheck:
+         test: ["CMD", "valkey-cli", "ping"]
+         interval: 5s
+         timeout: 3s
+         retries: 10
+         start_period: 5s
 ```
 
-**Networking**: Multicheck and Redis communicate via internal Docker network.
+**Networking**: Multicheck connects to Valkey via host networking to match local development settings.
 
 ## Testing
 

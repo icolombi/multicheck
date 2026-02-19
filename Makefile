@@ -51,7 +51,7 @@ test-quiet:
 	
 build-compose:
 	@export docker_IGNORE_CGROUPSV1_WARNING=1 && \
-	docker compose up --build --force-recreate
+	docker compose up --build # --force-recreate
 
 start:
 	@docker compose up

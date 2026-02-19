@@ -3,7 +3,8 @@ services:
     build: .
     network_mode: host
     depends_on:
-      - valkey
+      valkey:
+        condition: service_healthy
     environment:
       - VALKEY_HOST=127.0.0.1
       - VALKEY_PORT=6379
@@ -14,3 +15,9 @@ services:
     command: valkey-server /usr/local/etc/valkey/valkey.conf
     volumes:
       - ./valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s

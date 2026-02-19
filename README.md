@@ -35,7 +35,7 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 
 **Backend:**
 
-- Go 1.25+
+- Go 1.26+
 - Redis server
 - Docker (optional)
 
@@ -51,10 +51,12 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 **With Docker Compose:**
 
 ```bash
-docker-compose up
+docker compose up
 ```
 
 The API will be available at `http://localhost:8080`
+
+Note: Docker Compose waits for the Valkey healthcheck before starting Multicheck.
 
 **Manual Build:**
 
