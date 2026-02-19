@@ -9,7 +9,7 @@ services:
       - VALKEY_PORT=6379
 
   valkey:
-    image: docker.io/valkey/valkey:latest
+    image: docker.io/valkey/valkey:9
     network_mode: host
     command: valkey-server /usr/local/etc/valkey/valkey.conf
     volumes:

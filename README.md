@@ -284,8 +284,8 @@ Checks a domain against a custom list of blacklists, overriding the default conf
 - `domain` (required): Domain to check
 - `blacklists` (required): Array of DNS blacklist domains to query
 - `nameservers` (optional): Array of custom DNS nameservers to use (default: uses config.toml nameservers)
-```
 
+```txt
 **Response:**
 
 ```json
