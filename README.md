@@ -41,7 +41,7 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 
 **Frontend (optional):**
 
-- Node.js 18+
+- Node.js 22+
 - npm
 
 ### Installation and Startup
@@ -51,12 +51,26 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 **With Docker Compose:**
 
 ```bash
-docker compose up
+docker compose --profile frontend-prod up --build
 ```
 
 The API will be available at `http://localhost:8080`
+The frontend will be available at `http://localhost:5173` when a frontend profile is enabled.
 
 Note: Docker Compose waits for the Valkey healthcheck before starting Multicheck.
+Note: The Compose frontend uses `npm run build` and `npm run preview` for startup.
+
+**Frontend profiles:**
+
+```bash
+# Production preview (cached Dockerfile build)
+docker compose --profile frontend-prod up --build
+
+# Development server (no build, faster reloads)
+docker compose --profile frontend-dev up
+```
+
+If you do not pass a profile, the frontend service will not start.
 
 **Manual Build:**
 
