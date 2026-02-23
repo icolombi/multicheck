@@ -230,8 +230,7 @@ The `frontend/` directory contains a SvelteKit 5 application with the following 
   - `+page.svelte` - Home page with CheckForm and HistoryPanel
   - `health/+page.svelte` - Health dashboard with auto-refresh (5s interval)
 - **Configuration files:**
-  - `vite.config.ts` - Vite dev server with API proxy (`/api/*` → `http://localhost:8080`)
-  - `tailwind.config.js` - Tailwind with custom color tokens for dark/light themes
+  - `vite.config.ts` - Vite dev server with API proxy (`/api/*` → `http://localhost:8080`) and `@tailwindcss/vite` plugin
   - `svelte.config.js` - SvelteKit adapter configuration
 
 ### Frontend Tech Stack

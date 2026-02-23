@@ -588,8 +588,7 @@ frontend/
 │   │       └── +page.svelte       # Health dashboard
 │   └── app.css                    # Global styles (Tailwind)
 ├── package.json                   # Dependencies and scripts
-├── vite.config.ts                 # Vite config with API proxy
-├── tailwind.config.js             # Tailwind CSS configuration
+├── vite.config.ts                 # Vite config with API proxy and Tailwind plugin
 └── README.md                      # Frontend-specific documentation
 ```
 
