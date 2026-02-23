@@ -13,5 +13,9 @@ export default defineConfig({
 				rewrite: (path) => path.replace(/^\/api/, '')
 			}
 		}
+	},
+	preview: {
+		// Allow Traefik reverse proxy host
+		allowedHosts: ['lab.icolombi.net']
 	}
 });
