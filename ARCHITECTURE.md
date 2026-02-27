@@ -822,7 +822,7 @@ services:
          - frontend-prod
 
    frontend-dev:
-      image: node:22-alpine
+      image: node:24-alpine
       network_mode: host
       working_dir: /app
       depends_on:
