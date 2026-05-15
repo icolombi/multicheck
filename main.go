@@ -58,6 +58,8 @@ type Config struct {
 	DNSQueryTimeout      int
 	HTTPReadTimeout      int
 	HTTPWriteTimeout     int
+	HTTPIdleTimeout      int // Max time a keep-alive connection can be idle before closing
+	HTTPReadHeaderTimeout int // Max time to read request headers (defends against slow-header attacks)
 	nameServers          []string
 	listenPort           string
 	RedisHost            string
@@ -187,6 +189,12 @@ func main() {
 	// List of name servers
 	nameservers = configuration.nameServers
 
+	// Fail fast at startup if no nameservers are configured: rand.Intn(0) would panic
+	// and DNS lookups would be impossible.
+	if len(nameservers) == 0 {
+		log.Fatal("configuration error: no nameservers configured in config.toml (nameServers field is empty)")
+	}
+
 	resolver = &net.Resolver{
 		PreferGo:     true,
 		StrictErrors: true,
@@ -213,16 +221,20 @@ func main() {
 	//fmt.Println("Server listening...")
 	u, err := json.MarshalIndent(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort}, "", "   ")
 	if err != nil {
-		panic(err)
+		log.Printf("main: failed to marshal startup log: %v", err)
+	} else {
+		fmt.Println(string(u))
 	}
-	fmt.Println(string(u))
 
 	// Configure HTTP server with timeouts to prevent resource exhaustion
 	srv := &http.Server{
-		Addr:         configuration.listenPort,
-		Handler:      r,
-		ReadTimeout:  time.Duration(configuration.HTTPReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(configuration.HTTPWriteTimeout) * time.Second,
+		Addr:              configuration.listenPort,
+		Handler:           r,
+		ReadTimeout:       time.Duration(configuration.HTTPReadTimeout) * time.Second,
+		ReadHeaderTimeout: time.Duration(configuration.HTTPReadHeaderTimeout) * time.Second,
+		WriteTimeout:      time.Duration(configuration.HTTPWriteTimeout) * time.Second,
+		IdleTimeout:       time.Duration(configuration.HTTPIdleTimeout) * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB max header size
 	}
 	err = srv.ListenAndServe()
 
@@ -237,9 +249,10 @@ func main() {
 		fmt.Println("Avviato")
 		u, err := json.MarshalIndent(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort}, "", "   ")
 		if err != nil {
-			panic(err)
+			log.Printf("main: failed to marshal post-start log: %v", err)
+		} else {
+			fmt.Println(string(u))
 		}
-		fmt.Println(string(u))
 	}
 
 }
@@ -342,9 +355,14 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 
 			// If found in cache, get data from Redis
 		} else {
-			//fmt.Println(value)
-			json.Unmarshal([]byte(value), &ip)
-			ip.Cached = true
+			// If the cached entry is corrupted, fall through to a fresh DNS check
+			// rather than serving malformed data.
+			if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr != nil {
+				errors = append(errors, "cache entry corrupted, re-checking DNS")
+				ip.BlackListed, ip.BlackList, errors = checkBlacklistIP(ipAddress)
+			} else {
+				ip.Cached = true
+			}
 		}
 
 	} else {
@@ -430,8 +448,14 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			domain.BlackListed, domain.BlackList, errors = checkBlacklistDomain(domainName)
 		} else {
-			json.Unmarshal([]byte(value), &domain)
-			domain.Cached = true
+			// If the cached entry is corrupted, fall through to a fresh DNS check
+			// rather than serving malformed data.
+			if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr != nil {
+				errors = append(errors, "cache entry corrupted, re-checking DNS")
+				domain.BlackListed, domain.BlackList, errors = checkBlacklistDomain(domainName)
+			} else {
+				domain.Cached = true
+			}
 		}
 
 	} else {
@@ -587,15 +611,19 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	// Check Redis cache first
 	value, err := getRedisKey(cacheKey)
 	if err == nil {
-		// Found in cache
-		json.Unmarshal([]byte(value), &ip)
-		ip.Cached = true
-		ip.CacheKey = cacheKey
-		elapsed := time.Since(start).Seconds()
-		ip.TimeTaken = elapsed
-		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", http.StatusOK, "/ip/check", req.IP, requestBody, ip.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
-		return
+		// Found in cache — only serve it if the entry deserialises correctly.
+		// A corrupted entry falls through to a fresh DNS check.
+		if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr == nil {
+			ip.Cached = true
+			ip.CacheKey = cacheKey
+			elapsed := time.Since(start).Seconds()
+			ip.TimeTaken = elapsed
+			json.NewEncoder(w).Encode(ip)
+			logRequest("POST", http.StatusOK, "/ip/check", req.IP, requestBody, ip.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
+			return
+		}
+		// Unmarshal failed: log and fall through to DNS check
+		errors = append(errors, "cache entry corrupted, re-checking DNS")
 	}
 
 	// Not in cache, create resolver and check blacklists
@@ -750,15 +778,19 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	// Check Redis cache first
 	value, err := getRedisKey(cacheKey)
 	if err == nil {
-		// Found in cache
-		json.Unmarshal([]byte(value), &domain)
-		domain.Cached = true
-		domain.CacheKey = cacheKey
-		elapsed := time.Since(start).Seconds()
-		domain.TimeTaken = elapsed
-		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", http.StatusOK, "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
-		return
+		// Found in cache — only serve it if the entry deserialises correctly.
+		// A corrupted entry falls through to a fresh DNS check.
+		if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr == nil {
+			domain.Cached = true
+			domain.CacheKey = cacheKey
+			elapsed := time.Since(start).Seconds()
+			domain.TimeTaken = elapsed
+			json.NewEncoder(w).Encode(domain)
+			logRequest("POST", http.StatusOK, "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
+			return
+		}
+		// Unmarshal failed: log and fall through to DNS check
+		errors = append(errors, "cache entry corrupted, re-checking DNS")
 	}
 
 	// Not in cache, create resolver and check blacklists
@@ -817,8 +849,10 @@ func logRequest(httpMethod string, httpStatusCode int, method string, param stri
 		RedisConnections: redisConnections,
 	}, "", "   ")
 
+	// Do not panic on log marshal failure: a logging error must never crash the server.
 	if err != nil {
-		panic(err)
+		log.Printf("logRequest: failed to marshal log entry: %v", err)
+		return
 	}
 	fmt.Println(string(u))
 }

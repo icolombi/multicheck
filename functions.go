@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -49,6 +50,8 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.DNSQueryTimeout = viper.GetInt("dnsQueryTimeout")
 	configuration.HTTPReadTimeout = viper.GetInt("httpReadTimeout")
 	configuration.HTTPWriteTimeout = viper.GetInt("httpWriteTimeout")
+	configuration.HTTPIdleTimeout = viper.GetInt("httpIdleTimeout")
+	configuration.HTTPReadHeaderTimeout = viper.GetInt("httpReadHeaderTimeout")
 	configuration.nameServers = viper.GetStringSlice("nameServers")
 	configuration.listenPort = viper.GetString("listenPort")
 	configuration.RedisHost = viper.GetString("redisHost")
@@ -173,6 +176,11 @@ func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorM
 
 // Creates a custom resolver with the specified nameservers
 func createCustomResolver(nameservers []string) *net.Resolver {
+	// Defensive guard: POST handlers validate nameservers before calling this,
+	// but an empty slice would cause rand.Intn(0) to panic.
+	if len(nameservers) == 0 {
+		log.Fatal("createCustomResolver: nameservers list is empty")
+	}
 	return &net.Resolver{
 		PreferGo:     true,
 		StrictErrors: true,
@@ -215,12 +223,16 @@ func checkBlacklistIPWithCustomList(ipAddress string, blackLists []string, custo
 
 	}
 
-	error := <-errorCh
-	if error != "" {
-		errorList = append(errorList, error)
-	}
+	// Wait for all goroutines to finish, then drain the entire error channel.
+	// Reading after wg.Wait() ensures all goroutines have already sent their
+	// results, so we collect every error instead of just the first one.
 	wg.Wait()
 	close(errorCh)
+	for errMsg := range errorCh {
+		if errMsg != "" {
+			errorList = append(errorList, errMsg)
+		}
+	}
 
 	return blacklisted, blacklistsActive, errorList
 }
@@ -293,12 +305,16 @@ func checkBlacklistDomainWithCustomList(domainName string, blackLists []string, 
 		go checkDomainDNS(&wg, &mu, blacklist, domainName, blacklistsActive, errorCh, &blacklisted, resolverToUse)
 	}
 
-	error := <-errorCh
-	if error != "" {
-		errorList = append(errorList, error)
-	}
+	// Wait for all goroutines to finish, then drain the entire error channel.
+	// Reading after wg.Wait() ensures all goroutines have already sent their
+	// results, so we collect every error instead of just the first one.
 	wg.Wait()
 	close(errorCh)
+	for errMsg := range errorCh {
+		if errMsg != "" {
+			errorList = append(errorList, errMsg)
+		}
+	}
 
 	return blacklisted, blacklistsActive, errorList
 }

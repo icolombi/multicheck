@@ -36,6 +36,10 @@ httpReadTimeout = 30 # HTTP read timeout in seconds
 
 httpWriteTimeout = 30 # HTTP write timeout in seconds
 
+httpIdleTimeout = 60 # Max time a keep-alive connection can be idle in seconds
+
+httpReadHeaderTimeout = 10 # Max time to read request headers in seconds (defends against slow-header attacks)
+
 nameServers = """
 192.168.179.39"""
 
