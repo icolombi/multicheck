@@ -22,5 +22,8 @@ go.work
 
 bin/
 
+# Compiled binary in project root
+multicheck
+
 snyk-linux
 test.sh
