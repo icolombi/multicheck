@@ -5,15 +5,15 @@
 - **All code comments, documentation, and commit messages MUST be in English**
 - **All changes MUST be documented** in:
   - Code comments (explain why, not just what)
-  - README.md (for user-facing features)
+  - README.md: update when any API endpoint, request/response field, configuration parameter, or CLI behavior changes
   - CHANGELOG files (when present)
-  - ARCHITECTURE.md (for design/architecture changes)
+  - ARCHITECTURE.md: update when adding/removing components, changing data flow between components, or modifying concurrency patterns
 - Use consistent formatting (gofmt for Go, Prettier for JS/TS)
 - Write clear, descriptive commit messages following Conventional Commits:
   - Format: `<type>(<scope>): <description>`
   - Example: `feat(api): add POST /ip/check endpoint for custom blacklists`
 - Types and interfaces MUST have clear, descriptive names
-- Functions should be small, single-responsibility, and well-named
+- Functions should be no longer than 50 lines excluding comments, perform exactly one logical operation, and have names that describe that operation as a verb phrase (e.g., reverseIP, validateBlacklists)
 - Use idiomatic patterns for the language (e.g., error handling in Go)
 - Ensure proper input validation and error handling throughout
   - Git commit messages (clear and descriptive)
@@ -74,30 +74,25 @@ Functions:
 - `checkBlacklistIPWithCustomList()` - Main IP check with optional custom resolver
 - `checkBlacklistDomainWithCustomList()` - Main domain check with optional custom resolver
 
-## **Cache key**: 
+## Caching
 
-- **GET endpoints**: IP address or domain name (as-is)
-- **POST endpoints**: `post:ip:<ip>:<hash>` or `post:domain:<domain>:<hash>` where hash is 16-char truncated SHA256 of sorted blacklist array
-- **TTL**: `redisCacheTTL` seconds from config (default 300s)
-- **What's cached**: Complete response including `BlackListed`, `BlackList`, `ValidIP`/`ValidDomain`, `TimeTaken`, `Errors`
+| Endpoint | Cache Key Format | TTL Source | Fields Cached |
+|----------|-----------------|------------|---------------|
+| GET /ip/{ip} | IP address (as-is) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidIP`, `TimeTaken`, `Errors` |
+| GET /domain/{domain} | Domain name (as-is) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidDomain`, `TimeTaken`, `Errors` |
+| POST /ip/check | `post:ip:<ip>:<hash>` (hash = 16-char truncated SHA256 of sorted blacklist array) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidIP`, `TimeTaken`, `Errors` |
+| POST /domain/check | `post:domain:<domain>:<hash>` (hash = 16-char truncated SHA256 of sorted blacklist array) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidDomain`, `TimeTaken`, `Errors` |
+
 - **Cache indicator**: Set `Cached: true` in response when served from Redis
-- **Cache independence**: POST endpoints cache based on blacklist array only (nameservers don't affect cache key since DNS results should be consistent)
-
-### Caching Levels
-
-1. **Client-side**: `cacheControlMaxAge` (default 3600s) - HTTP header tells clients how long to cache
-2. **Server-side**: `redisCacheTTL` (default 300s) - How long results stay in Redis before DNS re-checker()` when POST endpoints specify custom nameservers
-
-Benefits: Avoids system DNS limitations, provides redundancy, allows per-request nameserver selection.
+- **Cache independence**: POST endpoints cache based on blacklist array only; nameservers do not affect the cache key
+- **Client-side**: `cacheControlMaxAge` (default 3600s) — HTTP `Cache-Control` header sent to clients
+- **Server-side**: `redisCacheTTL` (default 300s) — how long results stay in Redis before a live DNS lookup is performed
 
 ### Redis Caching Strategy
 
-- Cache key: IP address or domain name (as-is)
-- TTL: `redisCacheTTL` seconds from config (default 300s)
-
 **Key configuration parameters:**
 
-- `ipBlacklist` / `domainBlacklist` - Space-separated lists of DNSHTTPMethod`, `Method`, `Param`, `RequestBody` (for POST), `MemoryAlloc`, `NumGC`, `TimeTaken`, `Cached`, `ClientIP`, `Redis` status, `RedisConnections`. Parse with `jq` for debugging.
+- `ipBlacklist` / `domainBlacklist` - Space-separated lists of DNSBL hostnames to check against (e.g., `zen.spamhaus.org bl.spamcop.net`)
 
 Use `logRequest()` helper function for consistent logging across all handlers
 
@@ -139,16 +134,14 @@ Tests now include visual enhancements for better readability:
   - `make test`: Full verbose output with JSON logs and colors
   - `make test-quiet`: Clean summary showing only test names and results
 - Output uses ANSI escape codes and works in most modern terminals
-contains comprehensive tests:
-- `TestHealthCheckHandler` - Verifies /health endpoint and Redis connectivity
-- `TestDomainBlacklist` - Tests GET /domain with test.uribl.com (expects 127.0.0.14 from multi.uribl.com)
-- `TestIPBlacklist` - Tests GET /ip with 2.0.0.127 (expects 127.0.0.11 from zen.spamhaus.org)
-- `TestPostCheckDomain` - Tests POST /domain/che, uptime, Go version, and software version
-- `GET /ip/{ip}` - Check IP against default blacklists (validates with `net.ParseIP`)
-- `GET /domain/{domain}` - Check domain against default blacklists (validates with `validator.IsValidDomain`)
-- `POST /ip/check` - Check IP against custom blacklists with optional custom nameservers
-- `POST /domain/check` - Check domain against custom blacklists with optional custom nameservers
-- `GET /clear-cache/{key}` - Delete specific cache entry by key
+[main_test.go](../main_test.go) contains comprehensive tests:
+
+| Test Function | Endpoint | Input | Expected Assertion |
+|--------------|----------|-------|-------------------|
+| `TestHealthCheckHandler` | GET /health | — | HTTP 200, Redis connected, uptime and version fields present |
+| `TestDomainBlacklist` | GET /domain/{domain} | `test.uribl.com` | Response contains 127.0.0.14 from `multi.uribl.com` |
+| `TestIPBlacklist` | GET /ip/{ip} | `2.0.0.127` | Response contains 127.0.0.11 from `zen.spamhaus.org` |
+| `TestPostCheckDomain` | POST /domain/check | custom blacklist body | Domain listed on target blacklist with correct DNSBL response code |
 
 ### POST Endpoints Request Body
 
@@ -160,7 +153,7 @@ contains comprehensive tests:
 }
 ```
 
-**VaDNSBL Response Codes
+### DNSBL Response Codes
 
 - DNSBL servers return IPs in `127.0.0.x` range to indicate positive matches
 - Different codes indicate different types of listings (e.g., 127.0.0.2 = spam, 127.0.0.11 = XBL)
@@ -175,6 +168,7 @@ contains comprehensive tests:
 - Invalid input sets `Status: false` and returns HTTP 400
 - DNS lookup errors filtered (ignore "no such host" as expected for non-blacklisted)
 - POST endpoints: validate input before processing, return specific error messages
+- Validation is all-or-nothing for POST requests: if any blacklist entry or nameserver entry is invalid, reject the entire request with HTTP 400 and a specific error message identifying the first invalid entry. Do not process partial lists.
 
 ### Request Body Parsing (POST endpoints)
 
@@ -182,6 +176,7 @@ contains comprehensive tests:
 2. Use `json.NewDecoder(bytes.NewReader(bodyBytes))` for parsing
 3. Enable `decoder.DisallowUnknownFields()` to catch typos
 4. Log request body in JSON logs for debugging
+
 - Verify specific DNSBL response codes (not just presence in blacklist)
 - Fail if expected IP code doesn't match actual response
 
@@ -190,6 +185,7 @@ contains comprehensive tests:
 ```bash
 docker-compose up    # Starts multicheck + redis containers
 ```
+
 - Service exposed on port 8080
 - Depends on Redis at `redis:6379` (container network)
 - Dockerfile uses multi-stage build: Go builder → Alpine runtime
@@ -207,7 +203,7 @@ docker-compose up    # Starts multicheck + redis containers
 2. **Update README.md** - Document new endpoints, parameters, configuration options
 3. **Update this file** - Keep copilot-instructions.md synchronized with architecture changes
 4. **Add comments** - Explain complex logic, especially concurrency patterns and DNSBL specifics
-5. **Version bump** - Consider updating `version` variable in main.go for releases
+5. **Version bump** - Update the `version` variable in main.go when changes affect any public API endpoint, response schema, or configuration format. Do not update it for internal refactors or test-only changes.
 
 ### Testing
 
@@ -234,6 +230,8 @@ All endpoints set `Content-Type: application/json` and `Cache-Control: max-age=<
 ### Error Handling
 
 - Redis failures append to `Errors[]` array but don't block request
+- If Redis is unavailable at startup, log a warning and continue — the service must operate without caching (all requests will perform live DNS lookups). Do not exit on Redis connection failure.
+- If Redis becomes unavailable mid-request, skip cache read/write, set `Cached: false`, and append a descriptive error to `Errors[]`.
 - Invalid input sets `Status: false` and returns early
 - DNS lookup errors filtered (ignore "no such host" as expected for non-blacklisted)
 
@@ -244,6 +242,10 @@ Package-level variables: `ip`, `domain`, `health`, `clearCache`, `configuration`
 ### IP Reversal for DNSBL
 
 IPs must be reversed for DNSBL queries: `1.2.3.4` becomes `4.3.2.1.dnsbl.example.org`. See `reverseIP()` function.
+
+### Cache Clearing Security
+
+The `/clear-cache/{key}` endpoint has no authentication. Do not extend it to support wildcard or bulk deletion. Consider adding rate limiting or restricting to localhost if deploying publicly.
 
 ## Frontend Architecture
 
@@ -324,6 +326,16 @@ npm run format           # Format code with Prettier
 - Vite dev server proxies `/api/*` requests to backend
 - API responses match TypeScript interfaces in `src/lib/types.ts`
 - Frontend handles both GET (default blacklists) and POST (custom blacklists) endpoints
+
+### When Changing API Response Structure
+
+When modifying any Go response struct that is serialized to JSON:
+
+1. Update the Go struct in main.go
+2. Update the TypeScript interface in `src/lib/types.ts`
+3. Update the Zod schema in `src/lib/validators.ts` if the field is user-supplied
+4. Update README.md API documentation
+5. Add or update tests in main_test.go
 
 ### When Working on Frontend
 
