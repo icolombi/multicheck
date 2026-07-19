@@ -8,7 +8,8 @@ RUN go mod download
 
 # Copia il codice sorgente e builda
 COPY *.go ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ./bin/multicheck && \
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION}" -o ./bin/multicheck && \
     strip ./bin/multicheck
 
 FROM alpine:latest
