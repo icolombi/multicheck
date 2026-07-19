@@ -23,6 +23,7 @@
 - Use context-aware logging with structured JSON output for easy parsing
 - Write unit tests for all new functionality and edge cases
 - Security First: Always consider security implications of changes, especially for input handling and external dependencies
+- Use only stable and/or LTS versions when available
 
 ## Project Overview
 
