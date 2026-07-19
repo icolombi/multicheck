@@ -40,6 +40,8 @@ httpIdleTimeout = 60 # Max time a keep-alive connection can be idle in seconds
 
 httpReadHeaderTimeout = 10 # Max time to read request headers in seconds (defends against slow-header attacks)
 
+# DNS servers used for blacklist lookups. Leave empty ("") to use the
+# system default resolver (/etc/resolv.conf — in Kubernetes, the cluster DNS).
 nameServers = """
 192.168.179.39"""
 

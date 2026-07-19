@@ -189,22 +189,23 @@ func main() {
 	// List of name servers
 	nameservers = configuration.nameServers
 
-	// Fail fast at startup if no nameservers are configured: rand.Intn(0) would panic
-	// and DNS lookups would be impossible.
+	// With no nameservers configured, fall back to the system resolver
+	// (/etc/resolv.conf): in Kubernetes this is the cluster DNS.
 	if len(nameservers) == 0 {
-		log.Fatal("configuration error: no nameservers configured in config.toml (nameServers field is empty)")
-	}
-
-	resolver = &net.Resolver{
-		PreferGo:     true,
-		StrictErrors: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{}
-			// Prendo un name server a caso
-			randomIndex := rand.Intn(len(nameservers))
-			nameserver := nameservers[randomIndex]
-			return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-		},
+		log.Println("no nameservers configured, using system default resolver")
+		resolver = net.DefaultResolver
+	} else {
+		resolver = &net.Resolver{
+			PreferGo:     true,
+			StrictErrors: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{}
+				// Prendo un name server a caso
+				randomIndex := rand.Intn(len(nameservers))
+				nameserver := nameservers[randomIndex]
+				return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
+			},
+		}
 	}
 
 	// Check Redis availability
