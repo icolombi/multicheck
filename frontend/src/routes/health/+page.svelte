@@ -8,8 +8,8 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	onMount(async () => {
-		await loadHealth();
+	onMount(() => {
+		loadHealth();
 		// Refresh every 5 seconds
 		const interval = setInterval(loadHealth, 5000);
 		return () => clearInterval(interval);
