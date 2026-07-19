@@ -8,7 +8,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.30-alpine
 
 # Porta di ascolto e upstream API sono configurabili a runtime via envsubst
 # (feature dei template nginx ufficiali). In Kubernetes /api viene ruotato dal
