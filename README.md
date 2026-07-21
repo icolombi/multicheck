@@ -431,9 +431,28 @@ redisPort = 6379
 redisDatabase = 0
 redisPassword = "" # Leave empty if no password is required
 
+# Redis connection pool
+redisMaxIdle = 8      # Idle connections kept in the pool
+redisMaxActive = 64   # Upper bound on concurrent Redis connections
+redisConnTimeout = 2  # Connect/read/write timeout for Redis in seconds
+
+# Background monitors
+redisHealthCheckInterval = 5 # Redis availability probe interval in seconds
+memStatsInterval = 10        # Memory sampling interval in seconds
+
 # Listen port
 listenPort = ":8080"
 ```
+
+All the parameters above are optional except the blacklists: the pool and
+monitor settings fall back to the defaults shown here when missing, so an older
+`config.toml` keeps working after an upgrade.
+
+**Background monitors:** Redis availability and memory usage are sampled on a
+timer instead of per request. This keeps a Redis `PING` round-trip and
+`runtime.ReadMemStats` (which stops the world) off the request path. The
+`Redis`, `RedisConnections` and `MemoryAlloc` fields in the logs can therefore be
+up to one interval old; the `/health` endpoint always pings live.
 
 ### Environment Variables
 

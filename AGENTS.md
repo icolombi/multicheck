@@ -53,7 +53,7 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 ### Version Information
 
 - Version is stored in `main.go` as package-level variable `version`
-- Default value: `"1.0.0"` (change this for releases)
+- Default value: `"1.5.0"` (change this for releases)
 - Can be overridden at build time: `go build -ldflags "-X main.version=x.y.z"`
 - Displayed in `/health` endpoint response
 
@@ -65,7 +65,7 @@ All blacklist checks use `sync.WaitGroup` with goroutines for parallel DNS queri
 
 - Performs DNS lookup via custom resolver with random nameserver selection
 - Filters out `127.0.0.1` and `127.255.255.255` from results (DNSBL-specific false positives)
-- Updates shared map `blacklistsActive` when blacklisted (protected by `sync.Mutex`)
+- Updates the shared map `blacklistsActive` **and** the shared `blacklisted` flag when blacklisted — both writes happen under the same `sync.Mutex`, since several goroutines reach that branch concurrently
 - Reports errors via buffered channel `errorCh`
 
 Functions:
@@ -74,6 +74,14 @@ Functions:
 - `checkDomainDNS()` - Goroutine for domain blacklist lookup
 - `checkBlacklistIPWithCustomList()` - Main IP check with optional custom resolver
 - `checkBlacklistDomainWithCustomList()` - Main domain check with optional custom resolver
+
+### DNS Resolver
+
+`createCustomResolver()` builds every resolver, including the global one in
+`main()`. Two rules for its `Dial` closure:
+
+- Forward the `network` argument to `DialContext`. The Go resolver retries over TCP when a UDP answer comes back truncated, and hardcoding `"udp"` silently defeats that retry.
+- It returns an `error` rather than calling `log.Fatal`: it is reachable from a request path, where killing the process is never an acceptable failure mode.
 
 ## Caching
 
@@ -86,6 +94,9 @@ Functions:
 
 - **Cache indicator**: Set `Cached: true` in response when served from Redis
 - **Cache independence**: POST endpoints cache based on blacklist array only; nameservers do not affect the cache key
+- **Never cache a partial result**: when the DNS fan-out returns any error (timeout, resolver failure), skip the cache write. Keep those errors in a variable separate from the response-wide error list — the latter also holds Redis errors, which must not block caching
+- **Single write command**: `setRedisKey()` uses `SET key value EX ttl`. Do not split it back into `SET` + `EXPIRE`: the pipelined version could leave a key without a TTL and swallowed the `SET` error
+- **Redis down**: skip both the cache read and the cache write instead of letting them fail
 - **Client-side**: `cacheControlMaxAge` (default 3600s) — HTTP `Cache-Control` header sent to clients
 - **Server-side**: `redisCacheTTL` (default 300s) — how long results stay in Redis before a live DNS lookup is performed
 
@@ -103,6 +114,12 @@ Use `logRequest()` helper function for consistent logging across all handlers
 - `maxCustomNameservers` - Maximum nameservers allowed in POST requests (default 3)
 - `nameServers` - Space-separated list of DNS resolver IPs
 - `listenPort` - HTTP server port (default ":8080")
+- `redisMaxIdle` / `redisMaxActive` - Connection pool sizing (defaults 8 / 64)
+- `redisConnTimeout` - Connect/read/write timeout for Redis in seconds (default 2)
+- `redisHealthCheckInterval` / `memStatsInterval` - Background monitor intervals in seconds (defaults 5 / 10)
+
+Every parameter except the blacklists is optional: `applyConfigDefaults()` fills
+in the tuning keys so a `config.toml` written before they existed stays valid.
 - Cached response includes all fields: `BlackListed`, `BlackList`, `ValidIP`/`ValidDomain`, `TimeTaken`
 - Set `Cached: true` in response when served from Redis
 
@@ -110,9 +127,20 @@ Use `logRequest()` helper function for consistent logging across all handlers
 
 Uses Viper to read [config.toml](../config.toml). Supports `GSS_CONFIG_PATH` env var to override config location. All multiline strings in TOML are space-separated lists.
 
+### Background Monitors
+
+`startBackgroundMonitors()` (in functions.go, guarded by `sync.Once`) starts two
+tickers that cache process state for the handlers:
+
+- **Redis status** — a `PING` every `redisHealthCheckInterval` seconds stores availability, active connections and the last error into atomics. Handlers read them through `redisStatus()`; **never add a `pingRedis()` call to a request path.** `/health` is the sole exception: it pings live because reporting the current state is its purpose.
+- **Memory** — `runtime.ReadMemStats` every `memStatsInterval` seconds. This call stops the world, so it must never run per request; `MemUsage()` only reads the cached sample.
+
+Both are primed synchronously before the goroutines start, so the first request
+sees real values. Tests must call `startBackgroundMonitors()` in their setup.
+
 ### Structured JSON Logging
 
-Every request logs to stdout in JSON format with: `CurrentTime`, `Method`, `Param`, `MemoryAlloc`, `NumGC`, `TimeTaken`, `Cached`, `ClientIP`, `Redis` status, `RedisConnections`. Parse with `jq` for debugging.
+Every request logs to stdout in JSON format with: `CurrentTime`, `Method`, `Param`, `MemoryAlloc`, `NumGC`, `TimeTaken`, `Cached`, `ClientIP`, `Redis` status, `RedisConnections`. Parse with `jq` for debugging. The `MemoryAlloc`, `NumGC`, `Redis` and `RedisConnections` fields come from the background monitors and may be up to one interval old.
 
 ## Development Workflow
 
@@ -231,6 +259,8 @@ All endpoints set `Content-Type: application/json` and `Cache-Control: max-age=<
 ### Error Handling
 
 - Redis failures append to `Errors[]` array but don't block request
+- Build the message with `redisErrorMessage(reply, err)`: a PING can return an unexpected reply with a `nil` error, and calling `err.Error()` on it would panic the server
+- Accumulate errors with `append`, never with `=`: assigning the result of a check function over the error slice discards everything collected earlier (Redis status, corrupted cache entries)
 - If Redis is unavailable at startup, log a warning and continue — the service must operate without caching (all requests will perform live DNS lookups). Do not exit on Redis connection failure.
 - If Redis becomes unavailable mid-request, skip cache read/write, set `Cached: false`, and append a descriptive error to `Errors[]`.
 - Invalid input sets `Status: false` and returns early
@@ -238,7 +268,9 @@ All endpoints set `Content-Type: application/json` and `Cache-Control: max-age=<
 
 ### Global State
 
-Package-level variables: `ip`, `domain`, `health`, `clearCache`, `configuration`, `c` (Redis pool), `resolver`. These are shared across requests but mostly read-only after initialization except for result structs.
+Package-level variables: `configuration`, `c` (Redis pool), `resolver`, `nameservers`, `startTime`, plus the atomics fed by the background monitors. All are read-only after initialization; the atomics are the only mutable ones and are written exclusively by the monitor goroutines.
+
+**Never add a package-level variable that a handler writes.** Response structs and per-request values (`endpoints`, `uptime`, …) must be locals: concurrent requests would otherwise race on them. Run `go test -race` after touching anything shared.
 
 ### IP Reversal for DNSBL
 

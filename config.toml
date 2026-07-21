@@ -52,3 +52,15 @@ redisHost = "127.0.0.1"
 redisPort = 6379
 redisDatabase = 0
 redisPassword = "" # Leave empty if no password is required
+
+redisMaxIdle = 8 # Idle connections kept in the pool
+
+redisMaxActive = 64 # Upper bound on concurrent Redis connections
+
+redisConnTimeout = 2 # Connect/read/write timeout for Redis in seconds
+
+# Background monitors: they keep the Redis PING and runtime.ReadMemStats
+# (which stops the world) off the request path.
+redisHealthCheckInterval = 5 # Redis availability probe interval in seconds
+
+memStatsInterval = 10 # Memory sampling interval in seconds

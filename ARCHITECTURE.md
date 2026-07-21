@@ -234,21 +234,36 @@ Multicheck uses **redigo** with a connection pool to efficiently manage Redis co
 ```go
 func redisConnect() *redis.Pool {
     return &redis.Pool{
-        MaxIdle:   1,
-        MaxActive: 8,
+        MaxIdle:         configuration.RedisMaxIdle,
+        MaxActive:       configuration.RedisMaxActive,
+        IdleTimeout:     240 * time.Second,
+        MaxConnLifetime: 30 * time.Minute,
+        Wait:            true,
         Dial: func() (redis.Conn, error) {
-            c, err := redis.Dial("tcp", connString)
-            // ... authentication and database selection
-            return c, err
+            return redis.Dial("tcp", connString,
+                redis.DialConnectTimeout(timeout),
+                redis.DialReadTimeout(timeout),
+                redis.DialWriteTimeout(timeout),
+                redis.DialPassword(configuration.RedisPassword),
+                redis.DialDatabase(configuration.RedisDatabase),
+            )
         },
+        TestOnBorrow: /* PING connections idle for more than a minute */,
     }
 }
 ```
 
 **Pool parameters:**
 
-- `MaxIdle: 1` - One idle connection kept open
-- `MaxActive: 8` - Maximum 8 simultaneous connections
+- `MaxIdle` (default 8) - Idle connections kept open
+- `MaxActive` (default 64) - Maximum simultaneous connections
+- `Wait: true` - Callers block instead of receiving `ErrPoolExhausted`. A failed `Get` is indistinguishable from a cache miss for the handlers, so returning an error would trigger a redundant DNS fan-out exactly under peak load
+- `redisConnTimeout` (default 2s) - Applied to connect, read and write, so an unresponsive Redis cannot hold a handler until the HTTP write timeout
+- `IdleTimeout` / `MaxConnLifetime` / `TestOnBorrow` - Recycle and validate pooled connections that went stale server-side
+
+Cache writes use a single `SET key value EX ttl` command: the previous
+`SET` + `EXPIRE` pipeline discarded the `SET` error and could leave a key without
+an expiration.
 
 #### Caching Strategy
 
@@ -433,19 +448,38 @@ type Log struct {
    ↓
 13. Serialize response to JSON (includes CacheKey field)
    ↓
-14. Save in Redis with TTL (setRedisKey)
+14. Save in Redis with TTL (setRedisKey), only if the check returned no errors
    ↓
 15. Return JSON response to client (includes CacheKey for cache invalidation)
    ↓
 16. Generate JSON log on stdout (includes HTTPMethod, RequestBody, HTTPStatusCode)
 ```
 
+### Background Monitors
+
+Two tickers started by `startBackgroundMonitors()` keep expensive calls out of
+the request path. Handlers read their results from atomics, via `redisStatus()`
+and `MemUsage()`.
+
+```txt
+Every redisHealthCheckInterval (default 5s): PING Redis
+   → store availability, active connections, last error
+
+Every memStatsInterval (default 10s): runtime.ReadMemStats
+   → store allocated memory and GC count
+```
+
+`runtime.ReadMemStats` stops the world and the Redis PING costs a round-trip, so
+neither may be called per request. The consequence is that the `Redis`,
+`RedisConnections`, `MemoryAlloc` and `NumGC` log fields can be up to one
+interval old.
+
 ### Health Check
 
 ```txt
 1. Client sends GET /health
    ↓
-2. Performs PING on Redis
+2. Performs PING on Redis (live: this endpoint reports the current state)
    ↓
 3. Gets active connection count
    ↓
@@ -728,16 +762,16 @@ Dedicated page for system monitoring:
 
 ### Connection Pooling
 
-- **Redis pool**: Reuse of Redis connections (MaxActive: 8)
+- **Redis pool**: Reuse of Redis connections (MaxActive: 64 by default, configurable)
 - **DNS resolver**: Custom resolver with nameserver pool for redundancy
 - **Custom resolvers**: POST endpoints can specify custom nameservers per request
 
 ### Limits and Considerations
 
-1. **MaxActive: 8** - Maximum 8 simultaneous Redis connections
+1. **`redisMaxActive`** - Maximum simultaneous Redis connections (default 64); callers wait for a free one rather than failing
 2. **Buffered Channel**: Size = number of blacklists (prevents goroutine blocking)
-3. **Global State**: Shared package-level variables (read-mostly, thread-safe where needed)
-4. **Memory**: Allocations monitored via `MemUsage()`
+3. **Global State**: Package-level variables are read-only after initialization, except the atomics written by the background monitors. Handlers must never write a global
+4. **Memory**: Allocations sampled by the background monitor and read via `MemUsage()`
 5. **Request limits**:
    - Max 20 custom blacklists per POST request (configurable)
    - Max 3 custom nameservers per POST request (configurable)
@@ -986,8 +1020,11 @@ Usable for:
 - [ ] Distributed cache (Redis Cluster/Sentinel) for high availability
 - [ ] Prometheus metrics endpoint for monitoring
 - [ ] Request batching for multiple simultaneous queries
-- [ ] Connection pooling optimization (tune MaxActive/MaxIdle)
+- [x] Connection pooling optimization (tune MaxActive/MaxIdle)
 - [ ] HTTP/2 support for better performance
+- [ ] Propagate `r.Context()` into the DNS lookups, so a disconnected client stops the fan-out
+- [ ] Collapse concurrent lookups of the same key with `singleflight` to prevent cache stampedes
+- [ ] Graceful shutdown (SIGTERM + `srv.Shutdown()`)
 
 ### Features
 

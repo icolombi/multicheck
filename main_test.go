@@ -2,10 +2,8 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,19 +20,18 @@ func setupTestWithResolver() {
 		c = redisConnect()
 	}
 
+	// Handlers read the Redis status and memory figures from the background
+	// monitors, so they must be running for tests too.
+	startBackgroundMonitors()
+
 	// Always initialize resolver and nameservers (even if already configured)
 	nameservers = configuration.nameServers
 	if len(nameservers) > 0 {
-		resolver = &net.Resolver{
-			PreferGo:     true,
-			StrictErrors: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{}
-				randomIndex := rand.Intn(len(nameservers))
-				nameserver := nameservers[randomIndex]
-				return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-			},
+		customResolver, err := createCustomResolver(nameservers)
+		if err != nil {
+			panic("setupTestWithResolver: " + err.Error())
 		}
+		resolver = customResolver
 	}
 }
 

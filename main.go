@@ -2,12 +2,10 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net"
 	"net/http"
 	"runtime"
@@ -47,25 +45,32 @@ type Log struct {
 
 // Structure to hold configuration settings
 type Config struct {
-	domainBlacklist      []string
-	ipBlacklist          []string
-	CacheControlMaxAge   int
-	RedisCacheTTL        int
-	MaxCustomBlacklists  int
-	MaxCustomNameservers int
-	MaxRequestBodySize   int64
-	MaxStringLength      int
-	DNSQueryTimeout      int
-	HTTPReadTimeout      int
-	HTTPWriteTimeout     int
-	HTTPIdleTimeout      int // Max time a keep-alive connection can be idle before closing
+	domainBlacklist       []string
+	ipBlacklist           []string
+	CacheControlMaxAge    int
+	RedisCacheTTL         int
+	MaxCustomBlacklists   int
+	MaxCustomNameservers  int
+	MaxRequestBodySize    int64
+	MaxStringLength       int
+	DNSQueryTimeout       int
+	HTTPReadTimeout       int
+	HTTPWriteTimeout      int
+	HTTPIdleTimeout       int // Max time a keep-alive connection can be idle before closing
 	HTTPReadHeaderTimeout int // Max time to read request headers (defends against slow-header attacks)
-	nameServers          []string
-	listenPort           string
-	RedisHost            string
-	RedisPort            int
-	RedisDatabase        int
-	RedisPassword        string
+	nameServers           []string
+	listenPort            string
+	RedisHost             string
+	RedisPort             int
+	RedisDatabase         int
+	RedisPassword         string
+	RedisMaxIdle          int // Idle connections kept in the pool
+	RedisMaxActive        int // Upper bound on concurrent Redis connections
+	RedisConnTimeout      int // Connect/read/write timeout for Redis, in seconds
+	// Intervals of the background monitors that keep the Redis PING and
+	// runtime.ReadMemStats off the request path, in seconds.
+	RedisHealthCheckInterval int
+	MemStatsInterval         int
 }
 
 // Struct to represent the response of an IP object
@@ -144,20 +149,16 @@ var startLog StartLog
 // Variable to hold configuration settings
 var configuration Config
 
-// Variable to hold information about endpoints
-var endpoints Root
-
 var c *redis.Pool
 
 var resolver *net.Resolver
 
 var nameservers []string
 
-var uptime time.Duration
 var startTime = time.Now()
 
 // version can be set during build with -ldflags "-X main.version=x.y.z"
-var version = "1.0.0"
+var version = "1.5.0"
 
 func main() {
 	// Start time, used to calculate uptime
@@ -195,27 +196,20 @@ func main() {
 		log.Println("no nameservers configured, using system default resolver")
 		resolver = net.DefaultResolver
 	} else {
-		resolver = &net.Resolver{
-			PreferGo:     true,
-			StrictErrors: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{}
-				// Prendo un name server a caso
-				randomIndex := rand.Intn(len(nameservers))
-				nameserver := nameservers[randomIndex]
-				return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
-			},
+		customResolver, err := createCustomResolver(nameservers)
+		if err != nil {
+			log.Fatalf("main: cannot build the DNS resolver: %v", err)
 		}
+		resolver = customResolver
 	}
 
-	// Check Redis availability
-	reply, err := pingRedis()
-	if err != nil || reply != "PONG" {
-		startLog.Redis = false
-		startLog.Errors = append(startLog.Errors, "Redis: "+err.Error())
-
-	} else {
-		startLog.Redis = true
+	// Start the background monitors and take the first Redis reading from them,
+	// so no request has to pay for a PING or for runtime.ReadMemStats.
+	startBackgroundMonitors()
+	redisAvailable, _, redisErrorMsg := redisStatus()
+	startLog.Redis = redisAvailable
+	if !redisAvailable {
+		startLog.Errors = append(startLog.Errors, redisErrorMsg)
 	}
 
 	// Start the server
@@ -267,7 +261,9 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 	var endpointsList []string
 	endpointsList = append(endpointsList, "GET /ip/<ip>", "GET /domain/<domain>", "POST /ip/check", "POST /domain/check", "GET /health", "GET /clear-cache/<object-name>")
 
-	endpoints = Root{EndPoints: endpointsList,
+	// Built per request: a package-level variable would be written concurrently
+	// by simultaneous clients.
+	endpoints := Root{EndPoints: endpointsList,
 		DomainBlacklist: configuration.domainBlacklist,
 		IpBlacklist:     configuration.ipBlacklist,
 		RedisCacheTTL:   configuration.RedisCacheTTL,
@@ -287,19 +283,21 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	var health Health
 	w.Header().Set("Content-Type", "application/json")
 
-	// Check Redis status
-
+	// Check Redis status. This endpoint pings live, on purpose: unlike the other
+	// handlers it exists to report the current state, not to serve from cache.
 	reply, err := pingRedis()
 	if err != nil || reply != "PONG" {
 		health.Redis = false
-		errors = append(errors, "Redis: "+err.Error())
+		errors = append(errors, redisErrorMessage(reply, err))
 
 	} else {
 		health.Redis = true
 		health.RedisConnections = getRedisConnections()
 		health.CachedItems = getRedisKeysCount()
 	}
-	uptime = time.Duration(time.Since(startTime).Seconds())
+	// time.Since already returns a Duration: converting Seconds() into one
+	// reinterpreted the seconds count as nanoseconds.
+	uptime := time.Since(startTime)
 	health.Alive = true
 	memAlloc, _ := MemUsage()
 	health = Health{Alive: health.Alive, Redis: health.Redis, RedisConnections: health.RedisConnections, CachedItems: health.CachedItems, Uptime: uptime, GoVersion: runtime.Version(), Version: version, MemoryAlloc: memAlloc}
@@ -313,16 +311,14 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
 	var errors []string
+	// Errors from the DNS fan-out, kept apart from the response-wide list so a
+	// partial result is never written to the cache.
+	var checkErrors []string
 	var ip Ip
 
-	redisAvailable := false
-	redisConnections := 0
-	reply, err := pingRedis()
-	if err != nil || reply != "PONG" {
-		errors = append(errors, "Redis: "+err.Error())
-	} else {
-		redisAvailable = true
-		redisConnections = getRedisConnections()
+	redisAvailable, redisConnections, redisErrorMsg := redisStatus()
+	if !redisAvailable {
+		errors = append(errors, redisErrorMsg)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
@@ -346,24 +342,26 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if net.ParseIP(params["ip"]) != nil {
 		ip.ValidIP = true
-		// Look for it in Redis cache
-		value, err := getRedisKey(ipAddress)
 
-		// If not in cache, check the blacklists
-		if err != nil {
-
-			ip.BlackListed, ip.BlackList, errors = checkBlacklistIP(ipAddress)
-
-			// If found in cache, get data from Redis
-		} else {
-			// If the cached entry is corrupted, fall through to a fresh DNS check
-			// rather than serving malformed data.
-			if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr != nil {
-				errors = append(errors, "cache entry corrupted, re-checking DNS")
-				ip.BlackListed, ip.BlackList, errors = checkBlacklistIP(ipAddress)
-			} else {
-				ip.Cached = true
+		// Look for it in Redis cache. Skipped entirely when Redis is down.
+		if redisAvailable {
+			if value, cacheErr := getRedisKey(ipAddress); cacheErr == nil {
+				// If the cached entry is corrupted, fall through to a fresh DNS
+				// check rather than serving malformed data.
+				if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr != nil {
+					errors = append(errors, "cache entry corrupted, re-checking DNS")
+				} else {
+					ip.Cached = true
+				}
 			}
+		}
+
+		// Not served from cache: check the blacklists.
+		if !ip.Cached {
+			ip.BlackListed, ip.BlackList, checkErrors = checkBlacklistIP(ipAddress)
+			// Append, never assign: overwriting would discard the Redis errors
+			// collected above.
+			errors = append(errors, checkErrors...)
 		}
 
 	} else {
@@ -387,8 +385,9 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		CacheKey:    ipAddress,
 		Errors:      errors}
 	//fmt.Println(json.Marshal(ip))
-	// If IP is not in cache AND IP is valid, save to Redis
-	if !ip.Cached && ip.ValidIP {
+	// Save to Redis only for a valid IP whose check completed without errors:
+	// caching a partial result would serve it for the whole TTL.
+	if !ip.Cached && ip.ValidIP && redisAvailable && len(checkErrors) == 0 {
 		value, _ := json.Marshal(ip)
 		valueStr := string(value)
 		err := setRedisKey(ipAddress, valueStr)
@@ -408,17 +407,14 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	clientIP := r.RemoteAddr
 	start := time.Now()
 	var errors []string
+	// Errors from the DNS fan-out, kept apart from the response-wide list so a
+	// partial result is never written to the cache.
+	var checkErrors []string
 	var domain Domain
 
-	redisAvailable := false
-	redisConnections := 0
-	reply, err := pingRedis()
-	if err != nil || reply != "PONG" {
-		errors = append(errors, "Redis: "+err.Error())
-
-	} else {
-		redisAvailable = true
-		redisConnections = getRedisConnections()
+	redisAvailable, redisConnections, redisErrorMsg := redisStatus()
+	if !redisAvailable {
+		errors = append(errors, redisErrorMsg)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -443,20 +439,26 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if validator.IsValidDomain(params["domain"]) {
 		domain.ValidDomain = true
-		// Look for it in Redis cache
-		value, err := getRedisKey(domainName)
-		// If not in cache, check the blacklists
-		if err != nil {
-			domain.BlackListed, domain.BlackList, errors = checkBlacklistDomain(domainName)
-		} else {
-			// If the cached entry is corrupted, fall through to a fresh DNS check
-			// rather than serving malformed data.
-			if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr != nil {
-				errors = append(errors, "cache entry corrupted, re-checking DNS")
-				domain.BlackListed, domain.BlackList, errors = checkBlacklistDomain(domainName)
-			} else {
-				domain.Cached = true
+
+		// Look for it in Redis cache. Skipped entirely when Redis is down.
+		if redisAvailable {
+			if value, cacheErr := getRedisKey(domainName); cacheErr == nil {
+				// If the cached entry is corrupted, fall through to a fresh DNS
+				// check rather than serving malformed data.
+				if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr != nil {
+					errors = append(errors, "cache entry corrupted, re-checking DNS")
+				} else {
+					domain.Cached = true
+				}
 			}
+		}
+
+		// Not served from cache: check the blacklists.
+		if !domain.Cached {
+			domain.BlackListed, domain.BlackList, checkErrors = checkBlacklistDomain(domainName)
+			// Append, never assign: overwriting would discard the Redis errors
+			// collected above.
+			errors = append(errors, checkErrors...)
 		}
 
 	} else {
@@ -480,8 +482,9 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		CacheKey:    domainName,
 		Errors:      errors}
 
-	// If domain is not in cache AND domain is valid, save to Redis
-	if !domain.Cached && domain.ValidDomain {
+	// Save to Redis only for a valid domain whose check completed without errors:
+	// caching a partial result would serve it for the whole TTL.
+	if !domain.Cached && domain.ValidDomain && redisAvailable && len(checkErrors) == 0 {
 		value, _ := json.Marshal(domain)
 		valueStr := string(value)
 		err := setRedisKey(domainName, valueStr)
@@ -503,14 +506,9 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	var ip Ip
 
 	// Check Redis
-	redisAvailable := false
-	redisConnections := 0
-	reply, err := pingRedis()
-	if err != nil || reply != "PONG" {
-		errors = append(errors, "Redis: "+err.Error())
-	} else {
-		redisAvailable = true
-		redisConnections = getRedisConnections()
+	redisAvailable, redisConnections, redisErrorMsg := redisStatus()
+	if !redisAvailable {
+		errors = append(errors, redisErrorMsg)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -609,32 +607,47 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	// Generate cache key for POST request
 	cacheKey := buildPostCacheKey("ip", req.IP, req.Blacklists)
 
-	// Check Redis cache first
-	value, err := getRedisKey(cacheKey)
-	if err == nil {
-		// Found in cache — only serve it if the entry deserialises correctly.
-		// A corrupted entry falls through to a fresh DNS check.
-		if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr == nil {
-			ip.Cached = true
-			ip.CacheKey = cacheKey
-			elapsed := time.Since(start).Seconds()
-			ip.TimeTaken = elapsed
-			json.NewEncoder(w).Encode(ip)
-			logRequest("POST", http.StatusOK, "/ip/check", req.IP, requestBody, ip.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
-			return
+	// Check Redis cache first. Skipped entirely when Redis is down.
+	if redisAvailable {
+		if value, cacheErr := getRedisKey(cacheKey); cacheErr == nil {
+			// Found in cache — only serve it if the entry deserialises correctly.
+			// A corrupted entry falls through to a fresh DNS check.
+			if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr == nil {
+				ip.Cached = true
+				ip.CacheKey = cacheKey
+				elapsed := time.Since(start).Seconds()
+				ip.TimeTaken = elapsed
+				json.NewEncoder(w).Encode(ip)
+				logRequest("POST", http.StatusOK, "/ip/check", req.IP, requestBody, ip.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
+				return
+			}
+			// Unmarshal failed: log and fall through to DNS check
+			errors = append(errors, "cache entry corrupted, re-checking DNS")
 		}
-		// Unmarshal failed: log and fall through to DNS check
-		errors = append(errors, "cache entry corrupted, re-checking DNS")
 	}
 
 	// Not in cache, create resolver and check blacklists
 	var customResolver *net.Resolver
 	if len(req.Nameservers) > 0 {
-		customResolver = createCustomResolver(req.Nameservers)
+		customResolver, err = createCustomResolver(req.Nameservers)
+		if err != nil {
+			// Nameservers are validated above, so this is an internal invariant
+			// violation rather than a client mistake.
+			errors = append(errors, err.Error())
+			elapsed := time.Since(start).Seconds()
+			ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: true, Status: false, Errors: errors}
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(ip)
+			logRequest("POST", http.StatusInternalServerError, "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+			return
+		}
 	}
 
-	// Check custom blacklists
-	ip.BlackListed, ip.BlackList, errors = checkBlacklistIPWithCustomList(req.IP, req.Blacklists, customResolver)
+	// Check custom blacklists. Append, never assign: overwriting would discard
+	// the Redis errors collected above.
+	var checkErrors []string
+	ip.BlackListed, ip.BlackList, checkErrors = checkBlacklistIPWithCustomList(req.IP, req.Blacklists, customResolver)
+	errors = append(errors, checkErrors...)
 
 	elapsed := time.Since(start).Seconds()
 	ip = Ip{
@@ -649,12 +662,14 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		Errors:      errors,
 	}
 
-	// Save to cache
-	valueToCache, _ := json.Marshal(ip)
-	valueStr := string(valueToCache)
-	err = setRedisKey(cacheKey, valueStr)
-	if err != nil {
-		ip.Errors = append(ip.Errors, "cache save error: "+err.Error())
+	// Save to cache only when the check completed without errors: caching a
+	// partial result would serve it for the whole TTL.
+	if redisAvailable && len(checkErrors) == 0 {
+		valueToCache, _ := json.Marshal(ip)
+		valueStr := string(valueToCache)
+		if err = setRedisKey(cacheKey, valueStr); err != nil {
+			ip.Errors = append(ip.Errors, "cache save error: "+err.Error())
+		}
 	}
 
 	json.NewEncoder(w).Encode(ip)
@@ -670,14 +685,9 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	var domain Domain
 
 	// Check Redis
-	redisAvailable := false
-	redisConnections := 0
-	reply, err := pingRedis()
-	if err != nil || reply != "PONG" {
-		errors = append(errors, "Redis: "+err.Error())
-	} else {
-		redisAvailable = true
-		redisConnections = getRedisConnections()
+	redisAvailable, redisConnections, redisErrorMsg := redisStatus()
+	if !redisAvailable {
+		errors = append(errors, redisErrorMsg)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -776,32 +786,47 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	// Generate cache key for POST request
 	cacheKey := buildPostCacheKey("domain", req.Domain, req.Blacklists)
 
-	// Check Redis cache first
-	value, err := getRedisKey(cacheKey)
-	if err == nil {
-		// Found in cache — only serve it if the entry deserialises correctly.
-		// A corrupted entry falls through to a fresh DNS check.
-		if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr == nil {
-			domain.Cached = true
-			domain.CacheKey = cacheKey
-			elapsed := time.Since(start).Seconds()
-			domain.TimeTaken = elapsed
-			json.NewEncoder(w).Encode(domain)
-			logRequest("POST", http.StatusOK, "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
-			return
+	// Check Redis cache first. Skipped entirely when Redis is down.
+	if redisAvailable {
+		if value, cacheErr := getRedisKey(cacheKey); cacheErr == nil {
+			// Found in cache — only serve it if the entry deserialises correctly.
+			// A corrupted entry falls through to a fresh DNS check.
+			if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr == nil {
+				domain.Cached = true
+				domain.CacheKey = cacheKey
+				elapsed := time.Since(start).Seconds()
+				domain.TimeTaken = elapsed
+				json.NewEncoder(w).Encode(domain)
+				logRequest("POST", http.StatusOK, "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, true, clientIP, redisAvailable, redisConnections)
+				return
+			}
+			// Unmarshal failed: log and fall through to DNS check
+			errors = append(errors, "cache entry corrupted, re-checking DNS")
 		}
-		// Unmarshal failed: log and fall through to DNS check
-		errors = append(errors, "cache entry corrupted, re-checking DNS")
 	}
 
 	// Not in cache, create resolver and check blacklists
 	var customResolver *net.Resolver
 	if len(req.Nameservers) > 0 {
-		customResolver = createCustomResolver(req.Nameservers)
+		customResolver, err = createCustomResolver(req.Nameservers)
+		if err != nil {
+			// Nameservers are validated above, so this is an internal invariant
+			// violation rather than a client mistake.
+			errors = append(errors, err.Error())
+			elapsed := time.Since(start).Seconds()
+			domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: true, Status: false, Errors: errors}
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(domain)
+			logRequest("POST", http.StatusInternalServerError, "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+			return
+		}
 	}
 
-	// Check custom blacklists
-	domain.BlackListed, domain.BlackList, errors = checkBlacklistDomainWithCustomList(req.Domain, req.Blacklists, customResolver)
+	// Check custom blacklists. Append, never assign: overwriting would discard
+	// the Redis errors collected above.
+	var checkErrors []string
+	domain.BlackListed, domain.BlackList, checkErrors = checkBlacklistDomainWithCustomList(req.Domain, req.Blacklists, customResolver)
+	errors = append(errors, checkErrors...)
 
 	elapsed := time.Since(start).Seconds()
 	domain = Domain{
@@ -816,12 +841,14 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		Errors:      errors,
 	}
 
-	// Save to cache
-	valueToCache, _ := json.Marshal(domain)
-	valueStr := string(valueToCache)
-	err = setRedisKey(cacheKey, valueStr)
-	if err != nil {
-		domain.Errors = append(domain.Errors, "cache save error: "+err.Error())
+	// Save to cache only when the check completed without errors: caching a
+	// partial result would serve it for the whole TTL.
+	if redisAvailable && len(checkErrors) == 0 {
+		valueToCache, _ := json.Marshal(domain)
+		valueStr := string(valueToCache)
+		if err = setRedisKey(cacheKey, valueStr); err != nil {
+			domain.Errors = append(domain.Errors, "cache save error: "+err.Error())
+		}
 	}
 
 	json.NewEncoder(w).Encode(domain)
@@ -866,19 +893,13 @@ func DelCache(w http.ResponseWriter, r *http.Request) {
 	var errors []string
 	var clearCache ClearCache
 
-	redisAvailable := false
-	redisConnections := 0
-	reply, err := pingRedis()
-	if err != nil || reply != "PONG" {
-		errors = append(errors, "Redis: "+err.Error())
-
-	} else {
-		redisAvailable = true
-		redisConnections = getRedisConnections()
+	redisAvailable, redisConnections, redisErrorMsg := redisStatus()
+	if !redisAvailable {
+		errors = append(errors, redisErrorMsg)
 	}
 	params := mux.Vars(r)
 	key := params["key"]
-	err = delRedisKey(key)
+	err := delRedisKey(key)
 	if err != nil {
 		errors = append(errors, string(err.Error()))
 		clearCache.Status = false

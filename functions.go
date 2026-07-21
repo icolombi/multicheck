@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"math/rand"
 	"net"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -58,17 +58,125 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.RedisPort = viper.GetInt("redisPort")
 	configuration.RedisDatabase = viper.GetInt("redisDatabase")
 	configuration.RedisPassword = viper.GetString("redisPassword")
+	configuration.RedisMaxIdle = viper.GetInt("redisMaxIdle")
+	configuration.RedisMaxActive = viper.GetInt("redisMaxActive")
+	configuration.RedisConnTimeout = viper.GetInt("redisConnTimeout")
+	configuration.RedisHealthCheckInterval = viper.GetInt("redisHealthCheckInterval")
+	configuration.MemStatsInterval = viper.GetInt("memStatsInterval")
+
+	// Apply defaults for the optional tuning parameters, so configuration files
+	// written before these keys existed keep working unchanged.
+	applyConfigDefaults(&configuration)
 
 	return configuration
 }
 
-// Function to get memory usage
-func MemUsage() (memAlloc uint64, numGC uint32) {
+// applyConfigDefaults fills in the optional tuning parameters that were added
+// after the initial configuration format, keeping older config.toml files valid.
+func applyConfigDefaults(c *Config) {
+	if c.RedisMaxIdle <= 0 {
+		c.RedisMaxIdle = 8
+	}
+	if c.RedisMaxActive <= 0 {
+		c.RedisMaxActive = 64
+	}
+	if c.RedisConnTimeout <= 0 {
+		c.RedisConnTimeout = 2
+	}
+	if c.RedisHealthCheckInterval <= 0 {
+		c.RedisHealthCheckInterval = 5
+	}
+	if c.MemStatsInterval <= 0 {
+		c.MemStatsInterval = 10
+	}
+}
+
+// Cached process and Redis state, refreshed by the background monitors.
+// Sampling out of band keeps runtime.ReadMemStats (which stops the world) and
+// the Redis PING round-trip off the request path.
+var (
+	monitorsOnce     sync.Once
+	memAllocCached   atomic.Uint64
+	numGCCached      atomic.Uint32
+	redisUp          atomic.Bool
+	redisConnsCached atomic.Int64
+	redisLastErr     atomic.Value // string
+)
+
+// startBackgroundMonitors samples memory statistics and Redis availability on a
+// timer so handlers can read both without paying their cost per request.
+// Safe to call more than once: only the first call starts the goroutines.
+func startBackgroundMonitors() {
+	monitorsOnce.Do(func() {
+		// Prime the caches so the very first request sees real values.
+		sampleMemStats()
+		refreshRedisStatus()
+
+		go func() {
+			ticker := time.NewTicker(time.Duration(configuration.MemStatsInterval) * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				sampleMemStats()
+			}
+		}()
+
+		go func() {
+			ticker := time.NewTicker(time.Duration(configuration.RedisHealthCheckInterval) * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				refreshRedisStatus()
+			}
+		}()
+	})
+}
+
+// sampleMemStats refreshes the cached memory figures. runtime.ReadMemStats
+// stops the world, which is why it must never run inside a handler.
+func sampleMemStats() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	memAlloc = bToKb(m.Alloc)
-	numGC = m.NumGC
-	return memAlloc, numGC
+	memAllocCached.Store(bToKb(m.Alloc))
+	numGCCached.Store(m.NumGC)
+}
+
+// refreshRedisStatus pings Redis once and stores the outcome for the handlers.
+func refreshRedisStatus() {
+	reply, err := pingRedis()
+	redisConnsCached.Store(int64(c.ActiveCount()))
+	if err == nil && reply == "PONG" {
+		redisUp.Store(true)
+		redisLastErr.Store("")
+		return
+	}
+	redisUp.Store(false)
+	redisLastErr.Store(redisErrorMessage(reply, err))
+}
+
+// redisErrorMessage describes a failed PING. err is nil when Redis answers with
+// an unexpected reply, so it must never be dereferenced unconditionally.
+func redisErrorMessage(reply string, err error) string {
+	if err != nil {
+		return "Redis: " + err.Error()
+	}
+	return fmt.Sprintf("Redis: unexpected PING reply %q", reply)
+}
+
+// redisStatus returns the cached availability, active connection count and, when
+// Redis is down, the message describing the last failure.
+func redisStatus() (available bool, connections int, errorMsg string) {
+	available = redisUp.Load()
+	connections = int(redisConnsCached.Load())
+	if !available {
+		if msg, ok := redisLastErr.Load().(string); ok {
+			errorMsg = msg
+		}
+	}
+	return available, connections, errorMsg
+}
+
+// MemUsage returns the latest memory sample taken by the background monitor.
+func MemUsage() (memAlloc uint64, numGC uint32) {
+	return memAllocCached.Load(), numGCCached.Load()
 }
 
 func bToKb(b uint64) uint64 {
@@ -175,23 +283,26 @@ func validateBlacklists(blacklists []string, maxAllowed int) (valid bool, errorM
 }
 
 // Creates a custom resolver with the specified nameservers
-func createCustomResolver(nameservers []string) *net.Resolver {
+func createCustomResolver(nameservers []string) (*net.Resolver, error) {
 	// Defensive guard: POST handlers validate nameservers before calling this,
 	// but an empty slice would cause rand.Intn(0) to panic.
 	if len(nameservers) == 0 {
-		log.Fatal("createCustomResolver: nameservers list is empty")
+		return nil, fmt.Errorf("createCustomResolver: nameservers list is empty")
 	}
 	return &net.Resolver{
 		PreferGo:     true,
 		StrictErrors: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			d := net.Dialer{}
-			// Prendo un name server a caso
+			// Pick a random nameserver from the configured list.
 			randomIndex := rand.Intn(len(nameservers))
 			nameserver := nameservers[randomIndex]
-			return d.DialContext(ctx, "udp", net.JoinHostPort(nameserver, "53"))
+			// Forward the network requested by the resolver: it retries over TCP
+			// when a UDP answer comes back truncated, and hardcoding "udp" here
+			// would silently defeat that retry.
+			return d.DialContext(ctx, network, net.JoinHostPort(nameserver, "53"))
 		},
-	}
+	}, nil
 }
 
 // Given an IP, returns its presence in a list of blacklists
@@ -259,9 +370,10 @@ func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP 
 	if len(value) != 0 {
 		//fmt.Print("Blacklisted A: ")
 		//fmt.Println(value)
-		*blacklisted = true
-		// Protect shared map write
+		// Protect both shared writes: several goroutines reach this branch
+		// concurrently, so the flag needs the same lock as the map.
 		mu.Lock()
+		*blacklisted = true
 		blacklistsActive[blacklist] = value
 		mu.Unlock()
 	}
@@ -344,10 +456,10 @@ func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domain
 	}
 
 	if len(value) != 0 {
-
-		*blacklisted = true
-		// Protect shared map write
+		// Protect both shared writes: several goroutines reach this branch
+		// concurrently, so the flag needs the same lock as the map.
 		mu.Lock()
+		*blacklisted = true
 		blacklistsActive[blacklist] = value
 		mu.Unlock()
 	}
@@ -396,20 +508,17 @@ func getRedisKey(key string) (reply string, err error) {
 	return reply, err
 }
 
-// setRedisKey set a key to Redis
+// setRedisKey set a key to Redis with its expiration
 func setRedisKey(key string, value string) error {
 
 	conn := c.Get()
 	defer conn.Close()
 
-	conn.Send("SET", key, value)
-	conn.Send("EXPIRE", key, configuration.RedisCacheTTL)
-	conn.Flush()
-	conn.Receive()
-	_, err := conn.Receive()
-	if err != nil {
-		return err
-	}
+	// SET ... EX writes the value and its TTL in a single atomic command: the
+	// previous SET + EXPIRE pipeline could leave a key without expiration and
+	// discarded the error returned by SET.
+	_, err := conn.Do("SET", key, value, "EX", configuration.RedisCacheTTL)
+
 	return err
 }
 
