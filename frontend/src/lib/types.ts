@@ -48,8 +48,18 @@ export interface HealthResponse {
 }
 
 export interface HistoryItem {
+	// Unique key for {#each}: two checks completing in the same millisecond would
+	// otherwise collide on `timestamp` and trigger a duplicate-key runtime error.
+	id: string;
 	type: CheckType;
 	value: string;
 	timestamp: number;
 	result: IpResponse | DomainResponse;
+}
+
+export interface ClearCacheResponse {
+	Key: string;
+	Status: boolean;
+	Errors: string[];
+	TimeTaken: number;
 }

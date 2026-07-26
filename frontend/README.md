@@ -116,9 +116,17 @@ npm run check
 # Format code
 npm run format
 
-# Lint code
+# Lint code (Prettier check + ESLint)
 npm run lint
 ```
+
+ESLint uses the flat config in `eslint.config.js` (ESLint 9). The `eslint-config-prettier`
+entries are last on purpose: they disable the stylistic rules that would otherwise
+conflict with `npm run format`. `package.json` and `package-lock.json` are listed in
+`.prettierignore` — npm owns their formatting, and letting Prettier convert them to
+tabs turned every version bump into a full-file diff.
+
+All three commands run in CI on every push; see the root README.
 
 ## Building for Production
 

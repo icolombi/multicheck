@@ -1,3 +1,11 @@
+//go:build integration
+
+// Integration tests. These need a reachable Redis instance and live DNS access to
+// third-party DNSBL servers, and they assert on sentinel codes those servers
+// control, so they cannot run in a plain `go test`.
+//
+//	go test -tags integration ./...
+//	make test-integration
 package main
 
 import (
@@ -13,30 +21,42 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// setupTestWithResolver initializes configuration, Redis pool and resolver for tests
-func setupTestWithResolver() {
-	if configuration.listenPort == "" {
-		configuration = ReadConfig(configuration)
-		c = redisConnect()
-	}
+// setupTestWithResolver initializes configuration, Redis pool and resolver for tests.
+//
+// Unlike the unit-test environment installed by TestMain, this reads the real
+// config.toml: integration tests are about the deployed configuration. The test is
+// skipped, not failed, when the environment it needs is missing.
+func setupTestWithResolver(t *testing.T) {
+	t.Helper()
+
+	configuration = ReadConfig(configuration)
+	c = redisConnect()
 
 	// Handlers read the Redis status and memory figures from the background
-	// monitors, so they must be running for tests too.
+	// monitors, so they must be running for tests too. The explicit refresh
+	// re-primes the cached status against the pool just assigned above.
 	startBackgroundMonitors()
+	refreshRedisStatus()
+
+	if available, _, errMsg := redisStatus(); !available {
+		t.Skipf("integration test needs a reachable Redis instance: %s", errMsg)
+	}
 
 	// Always initialize resolver and nameservers (even if already configured)
 	nameservers = configuration.nameServers
 	if len(nameservers) > 0 {
 		customResolver, err := createCustomResolver(nameservers)
 		if err != nil {
-			panic("setupTestWithResolver: " + err.Error())
+			t.Fatalf("setupTestWithResolver: %v", err)
 		}
 		resolver = customResolver
+	} else {
+		resolver = net.DefaultResolver
 	}
 }
 
 func TestHealthCheckHandler(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 
 	// Struct to hold the response
 	type Message struct {
@@ -82,11 +102,7 @@ func TestHealthCheckHandler(t *testing.T) {
 
 func TestDomainBlacklist(t *testing.T) {
 	// Initialize configuration, Redis and resolver
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	// Create router with handler
 	r := mux.NewRouter()
@@ -155,11 +171,7 @@ func TestDomainBlacklist(t *testing.T) {
 
 func TestIPBlacklist(t *testing.T) {
 	// Initialize configuration, Redis and resolver
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	// Create router with handler
 	r := mux.NewRouter()
@@ -228,7 +240,7 @@ func TestIPBlacklist(t *testing.T) {
 
 // Test to verify that GET /ip returns 400 with invalid IP
 func TestGetIpInvalid(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
 	req, _ := http.NewRequest("GET", "/ip/192.168.8.111111", nil)
@@ -241,7 +253,7 @@ func TestGetIpInvalid(t *testing.T) {
 
 // Test to verify that GET /domain returns 400 with invalid domain
 func TestGetDomainInvalid(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
 	req, _ := http.NewRequest("GET", "/domain/invalid..domain", nil)
@@ -254,7 +266,7 @@ func TestGetDomainInvalid(t *testing.T) {
 
 // Test to verify that POST /ip/check returns 400 with invalid IP
 func TestPostCheckIpInvalidIP(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 	body := CheckIpRequest{IP: "999.999.999.999", Blacklists: []string{"zen.spamhaus.org"}}
@@ -270,7 +282,7 @@ func TestPostCheckIpInvalidIP(t *testing.T) {
 
 // Test to verify that POST /ip/check returns 400 with empty blacklist
 func TestPostCheckIpEmptyBlacklists(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 	body := CheckIpRequest{IP: "8.8.8.8", Blacklists: []string{}}
@@ -286,7 +298,7 @@ func TestPostCheckIpEmptyBlacklists(t *testing.T) {
 
 // Test to verify that POST /ip/check returns 400 with too many blacklists
 func TestPostCheckIpTooManyBlacklists(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 	bl := make([]string, configuration.MaxCustomBlacklists+1)
@@ -306,7 +318,7 @@ func TestPostCheckIpTooManyBlacklists(t *testing.T) {
 
 // Test to verify that POST /ip/check returns 400 with invalid nameserver
 func TestPostCheckIpInvalidNameservers(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 	body := CheckIpRequest{IP: "8.8.8.8", Blacklists: []string{"zen.spamhaus.org"}, Nameservers: []string{"invalid"}}
@@ -322,7 +334,7 @@ func TestPostCheckIpInvalidNameservers(t *testing.T) {
 
 // Test to verify that POST /domain/check returns 400 with invalid domain
 func TestPostCheckDomainInvalidDomain(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 	body := CheckDomainRequest{Domain: "invalid..domain", Blacklists: []string{"multi.uribl.com"}}
@@ -338,7 +350,7 @@ func TestPostCheckDomainInvalidDomain(t *testing.T) {
 
 // Test to verify that POST /domain/check returns 400 with empty blacklist
 func TestPostCheckDomainEmptyBlacklists(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 	body := CheckDomainRequest{Domain: "example.com", Blacklists: []string{}}
@@ -354,7 +366,7 @@ func TestPostCheckDomainEmptyBlacklists(t *testing.T) {
 
 // Test to verify that POST /domain/check returns 400 with malformed JSON
 func TestPostCheckDomainInvalidJSON(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 	invalidJSON := []byte(`{"domain": "example.com", "blacklists": [`)
@@ -369,11 +381,7 @@ func TestPostCheckDomainInvalidJSON(t *testing.T) {
 
 func TestPostCheckDomain(t *testing.T) {
 	// Initialize configuration, Redis and resolver
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	// Create router with handler
 	r := mux.NewRouter()
@@ -453,11 +461,7 @@ func TestPostCheckDomain(t *testing.T) {
 
 func TestPostCheckIP(t *testing.T) {
 	// Initialize configuration, Redis and resolver
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	// Create router with handler
 	r := mux.NewRouter()
@@ -537,11 +541,7 @@ func TestPostCheckIP(t *testing.T) {
 
 // Test to verify that POST /ip/check returns correct CacheKey
 func TestPostCheckIpCacheKey(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
@@ -616,11 +616,7 @@ func TestPostCheckIpCacheKey(t *testing.T) {
 
 // Test to verify that POST /domain/check returns correct CacheKey
 func TestPostCheckDomainCacheKey(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
@@ -695,15 +691,11 @@ func TestPostCheckDomainCacheKey(t *testing.T) {
 
 // Test to verify that cache deletion works with POST endpoint CacheKey
 func TestPostCheckIpCacheDeletionWithCacheKey(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
-	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("DELETE")
 
 	// Prepare request body
 	requestBody := CheckIpRequest{
@@ -743,7 +735,7 @@ func TestPostCheckIpCacheDeletionWithCacheKey(t *testing.T) {
 	}
 
 	// Clear cache using CacheKey from response
-	reqClear, _ := http.NewRequest("GET", "/clear-cache/"+response1.CacheKey, nil)
+	reqClear, _ := http.NewRequest("DELETE", "/clear-cache/"+response1.CacheKey, nil)
 	rrClear := httptest.NewRecorder()
 	r.ServeHTTP(rrClear, reqClear)
 
@@ -777,7 +769,7 @@ func TestPostCheckIpCacheDeletionWithCacheKey(t *testing.T) {
 
 // Test to verify that GET / returns the endpoint list
 func TestRootHandler(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/", RootHandler).Methods("GET")
 	req, _ := http.NewRequest("GET", "/", nil)
@@ -805,14 +797,14 @@ func TestRootHandler(t *testing.T) {
 	}
 }
 
-// Test to verify that GET /clear-cache/{key} works
+// Test to verify that DELETE /clear-cache/{key} works
 func TestClearCache(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 
 	// First, create a cache entry by requesting an IP
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
-	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("DELETE")
 
 	testIP := "8.8.8.8"
 
@@ -822,7 +814,7 @@ func TestClearCache(t *testing.T) {
 	r.ServeHTTP(rr1, req1)
 
 	// Now clear the cache
-	req2, _ := http.NewRequest("GET", "/clear-cache/"+testIP, nil)
+	req2, _ := http.NewRequest("DELETE", "/clear-cache/"+testIP, nil)
 	rr2 := httptest.NewRecorder()
 	r.ServeHTTP(rr2, req2)
 
@@ -847,11 +839,7 @@ func TestClearCache(t *testing.T) {
 
 // Test to verify that a clean IP is not blacklisted
 func TestGetIpNotBlacklisted(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
@@ -886,11 +874,7 @@ func TestGetIpNotBlacklisted(t *testing.T) {
 
 // Test to verify that a clean domain is not blacklisted
 func TestGetDomainNotBlacklisted(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
@@ -925,11 +909,7 @@ func TestGetDomainNotBlacklisted(t *testing.T) {
 
 // Test to verify cache hit on second IP request
 func TestGetIpCacheHit(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
@@ -963,11 +943,7 @@ func TestGetIpCacheHit(t *testing.T) {
 
 // Test to verify cache hit on second domain request
 func TestGetDomainCacheHit(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
@@ -1001,7 +977,7 @@ func TestGetDomainCacheHit(t *testing.T) {
 
 // Test to verify that GET /ip returns 400 with IP too long
 func TestGetIpTooLong(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
 
@@ -1033,7 +1009,7 @@ func TestGetIpTooLong(t *testing.T) {
 
 // Test to verify that GET /domain returns 400 with domain too long
 func TestGetDomainTooLong(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
 
@@ -1066,7 +1042,7 @@ func TestGetDomainTooLong(t *testing.T) {
 
 // Test to verify that POST /ip/check returns 400 with too many nameservers
 func TestPostCheckIpTooManyNameservers(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 
@@ -1090,7 +1066,7 @@ func TestPostCheckIpTooManyNameservers(t *testing.T) {
 
 // Test to verify that POST /domain/check returns 400 with too many nameservers
 func TestPostCheckDomainTooManyNameservers(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 
@@ -1114,7 +1090,7 @@ func TestPostCheckDomainTooManyNameservers(t *testing.T) {
 
 // Test to verify that POST /domain/check returns 400 with too many blacklists
 func TestPostCheckDomainTooManyBlacklists(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 
@@ -1136,11 +1112,7 @@ func TestPostCheckDomainTooManyBlacklists(t *testing.T) {
 
 // Test to verify that POST /ip/check works with custom nameservers
 func TestPostCheckIpWithCustomNameservers(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
@@ -1175,11 +1147,7 @@ func TestPostCheckIpWithCustomNameservers(t *testing.T) {
 
 // Test to verify that POST /domain/check works with custom nameservers
 func TestPostCheckDomainWithCustomNameservers(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
@@ -1214,7 +1182,7 @@ func TestPostCheckDomainWithCustomNameservers(t *testing.T) {
 
 // Test to verify that POST /ip/check returns 400 with invalid JSON
 func TestPostCheckIpInvalidJSON(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 
@@ -1231,7 +1199,7 @@ func TestPostCheckIpInvalidJSON(t *testing.T) {
 
 // Test to verify that POST /domain/check returns 400 with invalid nameservers
 func TestPostCheckDomainInvalidNameservers(t *testing.T) {
-	setupTestWithResolver()
+	setupTestWithResolver(t)
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
 
@@ -1250,11 +1218,7 @@ func TestPostCheckDomainInvalidNameservers(t *testing.T) {
 // Test to verify cache consistency for domain blacklist checks
 // Verifies that cached responses are identical to original responses except for Cached flag
 func TestDomainBlacklistCacheConsistency(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
@@ -1367,11 +1331,7 @@ func TestDomainBlacklistCacheConsistency(t *testing.T) {
 // Test to verify cache consistency for IP blacklist checks
 // Verifies that cached responses are identical to original responses except for Cached flag
 func TestIPBlacklistCacheConsistency(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
@@ -1484,15 +1444,11 @@ func TestIPBlacklistCacheConsistency(t *testing.T) {
 // Test to verify cache deletion for domain blacklist checks
 // Verifies that after cache deletion, the next request is not from cache
 func TestDomainBlacklistCacheDeletion(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
-	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("DELETE")
 
 	testDomain := "github.com"
 
@@ -1522,7 +1478,7 @@ func TestDomainBlacklistCacheDeletion(t *testing.T) {
 	}
 
 	// Clear cache
-	reqClear, _ := http.NewRequest("GET", "/clear-cache/"+testDomain, nil)
+	reqClear, _ := http.NewRequest("DELETE", "/clear-cache/"+testDomain, nil)
 	rrClear := httptest.NewRecorder()
 	r.ServeHTTP(rrClear, reqClear)
 
@@ -1576,15 +1532,11 @@ func TestDomainBlacklistCacheDeletion(t *testing.T) {
 // Test to verify cache deletion for IP blacklist checks
 // Verifies that after cache deletion, the next request is not from cache
 func TestIPBlacklistCacheDeletion(t *testing.T) {
-	setupTestWithResolver()
-
-	if len(nameservers) == 0 {
-		t.Fatal("No nameservers configured in config.toml")
-	}
+	setupTestWithResolver(t)
 
 	r := mux.NewRouter()
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
-	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("DELETE")
 
 	testIP := "127.0.0.4"
 
@@ -1614,7 +1566,7 @@ func TestIPBlacklistCacheDeletion(t *testing.T) {
 	}
 
 	// Clear cache
-	reqClear, _ := http.NewRequest("GET", "/clear-cache/"+testIP, nil)
+	reqClear, _ := http.NewRequest("DELETE", "/clear-cache/"+testIP, nil)
 	rrClear := httptest.NewRecorder()
 	r.ServeHTTP(rrClear, reqClear)
 

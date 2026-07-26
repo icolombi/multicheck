@@ -21,7 +21,7 @@ Multicheck is a REST API service developed in Go that implements a reputation ve
 │  │  GET /domain/{domain}           │   │
 │  │  POST /ip/check                 │   │
 │  │  POST /domain/check             │   │
-│  │  GET /clear-cache/{key}         │   │
+│  │  DELETE /clear-cache/{key}      │   │
 │  └─────────────────────────────────┘   │
 └──────┬──────────────────────────────────┘
        │
@@ -54,7 +54,7 @@ The heart of the service is implemented using the **Gorilla Mux** router, which 
 - **`GetDomain()`**: Endpoint `/domain/{domain}` for domain verification against configured blacklists
 - **`PostCheckIp()`**: Endpoint `/ip/check` (POST) for IP verification with custom blacklists
 - **`PostCheckDomain()`**: Endpoint `/domain/check` (POST) for domain verification with custom blacklists
-- **`DelCache()`**: Endpoint `/clear-cache/{key}` to manually invalidate a cache entry
+- **`DelCache()`**: Endpoint `DELETE /clear-cache/{key}` to manually invalidate a cache entry. Restricted by `isOwnCacheKey()` to keys this service could have written
 
 #### Custom Blacklist Endpoints (POST)
 
@@ -168,7 +168,7 @@ func checkBlacklistIP(ipAddress string) (bool, map[string][]net.IP, []string) {
 
 The service uses a custom DNS resolver that:
 
-- Bypasses the system DNS
+- Bypasses the system DNS when `nameServers` is configured; falls back to the system resolver (`/etc/resolv.conf`, the cluster DNS under Kubernetes) when it is empty, which is the shipped default
 - Randomly selects from a pool of configurable nameservers
 - Uses `net.Resolver` with custom dialer
 - Supports automatic failover between nameservers
@@ -208,22 +208,29 @@ func reverseIP(ipAddress string) string {
 }
 ```
 
-#### False Positive Filtering
+#### Sentinel Reply Filtering
 
-The responses `127.0.0.1` and `127.255.255.255` are considered false positives and are filtered out:
+Not every `127.x.x.x` answer means "listed". `removeIPFromSlice()` separates the
+sentinel replies from the genuine listings and returns both, so the caller can tell
+the difference between "clean" and "we could not find out":
 
 ```go
-func removeIPFromSlice(slice []net.IP) []net.IP {
-    var result []net.IP
-    for _, ip := range slice {
-        if !ip.Equal(net.ParseIP("127.0.0.1")) &&
-           !ip.Equal(net.ParseIP("127.255.255.255")) {
-            result = append(result, ip)
-        }
-    }
-    return result
+var dnsblSentinelCodes = []string{
+    "127.0.0.1",       // long-standing false positive
+    "127.255.255.252", // query refused
+    "127.255.255.253", // query refused
+    "127.255.255.254", // query refused
+    "127.255.255.255", // long-standing false positive
 }
+
+func removeIPFromSlice(slice []net.IP) (result []net.IP, sentinels []net.IP)
 ```
+
+The `127.255.255.252-254` range is how Spamhaus (and others) signal that the query
+itself was rejected, typically because the resolver is a large public one or is over
+its quota. `isQueryRefused()` turns those into an entry in `errorList`; counting them
+as listings produced confident false positives exactly when the service was being
+rate limited.
 
 ### 3. Redis Caching System (`db.go`)
 
@@ -438,7 +445,7 @@ type Log struct {
    ↓
 10. Each goroutine:
    - Performs DNS lookup via resolver (with timeout)
-   - Filters false positives (127.0.0.1, 127.255.255.255)
+   - Filters sentinel replies (see dnsblSentinelCodes); a refusal code becomes an error, not a listing
    - Updates shared map if blacklisted (mutex-protected)
    - Sends errors on errorCh
    ↓
@@ -878,7 +885,20 @@ volumes:
 
 ### Backend Test Coverage
 
-`main_test.go` includes comprehensive tests for:
+The suite is split so the everyday command needs nothing but a Go toolchain.
+
+**Unit tests** — `functions_test.go`, `handlers_test.go`, sharing the hermetic
+environment built by `TestMain` in `testsupport_test.go`. No Redis server, no DNS
+traffic, no `config.toml` on disk. They cover the pure logic (address reversal,
+cache-key construction, sentinel filtering, input validation, configuration
+defaults) and every request path rejected before DNS or Redis work begins.
+
+**Integration tests** — `main_integration_test.go`, behind the `//go:build
+integration` tag. These read the real `config.toml`, need a reachable Redis instance
+and query third-party DNSBL servers. `setupTestWithResolver(t)` calls `t.Skip` when
+Redis is unreachable, so they never fail for environmental reasons.
+
+`main_integration_test.go` includes comprehensive tests for:
 
 **Basic Functionality:**
 
@@ -951,11 +971,15 @@ Utility scripts in root directory:
 ### Test Execution
 
 ```bash
-# Backend tests
+# Backend unit tests (no Redis, no network)
 make test              # Verbose colored output
 make test-quiet        # Summary only
-make test-cache-key    # Cache key integration tests
-go test -v ./...       # Direct Go test execution
+make test-race         # Under the race detector
+
+# Backend integration tests (needs Redis and live DNS)
+docker compose up -d valkey
+make test-integration
+make test-cache-key    # Cache key integration tests (shell based)
 
 # Frontend tests
 cd frontend
@@ -1078,6 +1102,34 @@ Usable for:
 
 ## Recent Changes
 
+### July 26, 2026 (v1.6.0 — correctness and security fixes)
+
+Backend:
+
+- `applyConfigDefaults()` now covers **every** optional key. It previously defaulted only five Redis/monitor settings, so a `config.toml` missing the others left them at zero — which rejects every input (`maxStringLength`), fails every DNS lookup (`dnsQueryTimeout`), rejects every POST body (`maxRequestBodySize`), disables caching (`redisCacheTTL`) and binds `:80` (`listenPort`)
+- Added `validateConfig()`: the service refuses to start with no blacklists, or with a `nameServers` entry that is not an IP
+- IPv6 is rejected explicitly (`isIPv4`). `net.ParseIP` accepted it, `reverseIP` could not reverse it, and the resulting nonsensical query answered "not blacklisted"
+- `/clear-cache/{key}` moved from `GET` to `DELETE`, restricted to keys this service could have written (`isOwnCacheKey`), and it now returns real status codes (`400`/`503`/`500`) instead of always `200`
+- `Cache-Control` moved to the success path: it was set before the validation branches, declaring `400` responses cacheable for an hour. Removed entirely from POST responses
+- Added graceful shutdown on `SIGINT`/`SIGTERM` (`srv.Shutdown` + Redis pool close). In-flight requests were previously truncated on every container stop
+- DNSBL refusal codes `127.255.255.252-254` are no longer counted as listings; they become an error entry, so a rate-limited resolver no longer produces confident false positives
+- Logs are single-line JSON (`json.Marshal`), and request bodies are truncated (`truncateForLog`) and omitted entirely from rejected-request logs
+- Client IP resolution via `clientIPFrom()`, honouring proxy headers only when `trustProxyHeaders` is set
+- `nameServers` now ships empty, selecting the system resolver, so a fresh clone works on any machine
+
+Frontend:
+
+- Fixed `bg-card`, which generated no CSS at all: the Tailwind v4 `@theme` block was missing the `card`/`popover` colour mappings, leaving ten cards transparent
+- Fixed "clear history", which assigned to a non-bindable prop and therefore did nothing; history items now carry a UUID so two checks in the same millisecond cannot collide on the `{#each}` key
+- API client rewritten around a single `request()` helper: request timeouts, backend `Errors[]` surfaced to the user, URL-encoded path parameters, and non-JSON responses handled
+- Theme applied by a blocking script in `app.html`, removing the flash of light theme on every load; toasts now follow the theme
+- Health dashboard keeps the last known-good data on a failed poll instead of blanking, and stops polling while the tab is hidden
+- Stricter client-side IPv4 validation (`parseInt` accepted `"1x.2.3.4"`), and Zod `safeParse` in place of the deprecated `.errors` alias
+
+Testing:
+
+- Test suite split: unit tests (`functions_test.go`, `handlers_test.go`, `testsupport_test.go`) run with no Redis, no DNS and no `config.toml`; endpoint tests moved to `main_integration_test.go` behind the `integration` build tag and skip themselves when Redis is unreachable
+
 ### January 20, 2026
 
 - Added `CacheKey` field to all API responses (backend + frontend)
@@ -1103,7 +1155,13 @@ Usable for:
 
 ## Version History
 
-- **v1.0.0** (Current): Full-featured DNSBL checker with caching and custom blacklists
+- **v1.6.0** (Current): Correctness and security fixes; IPv4-only checks, `DELETE /clear-cache`, graceful shutdown, complete configuration defaults, unit/integration test split
+- **v1.5.0**: Data races and blocking calls removed from the request path; background monitors for Redis status and memory
+- **v1.4.0**: Production images for Kubernetes, GHCR publishing workflow
+- **v1.3.0**: `CacheKey` exposed in every response; cache deletion for POST endpoints
+- **v1.2.0**: Redis caching for POST endpoints with hash-based, order-independent keys
+- **v1.1.0**: POST endpoints for custom blacklists and nameservers, with input validation and resource limits
+- **v1.0.0**: Full-featured DNSBL checker with caching
   - Backend: Go with Gorilla Mux, Redis caching, concurrent DNS lookups
   - Frontend: SvelteKit 5 with TypeScript and Tailwind CSS
   - Features: GET/POST endpoints, custom blacklists, custom nameservers, cache management

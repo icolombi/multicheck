@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { Toaster } from 'svelte-sonner';
 	import { Moon, Sun } from 'lucide-svelte';
+	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import type { Snippet } from 'svelte';
 
@@ -13,33 +14,22 @@
 	let darkMode = $state(false);
 
 	onMount(() => {
-		// Check system preference or localStorage
-		const stored = localStorage.getItem('darkMode');
-		if (stored !== null) {
-			darkMode = stored === 'true';
-		} else {
-			darkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
-		}
-		updateTheme();
+		// The theme itself is already applied by the blocking script in app.html, which
+		// runs before first paint and avoids the flash of light theme. Here we only
+		// mirror the resulting state so the toggle icon starts out correct.
+		darkMode = document.documentElement.classList.contains('dark');
 	});
 
 	function toggleDarkMode() {
 		darkMode = !darkMode;
 		localStorage.setItem('darkMode', darkMode.toString());
-		updateTheme();
-	}
-
-	function updateTheme() {
-		if (darkMode) {
-			document.documentElement.classList.add('dark');
-		} else {
-			document.documentElement.classList.remove('dark');
-		}
+		document.documentElement.classList.toggle('dark', darkMode);
 	}
 </script>
 
 <div class="min-h-screen bg-background">
-	<Toaster position="top-right" richColors />
+	<!-- Without an explicit theme the toasts stay light-coloured in dark mode. -->
+	<Toaster position="top-right" richColors theme={darkMode ? 'dark' : 'light'} />
 
 	<header class="border-b border-border bg-card">
 		<div class="container mx-auto px-4 py-4">
@@ -55,14 +45,16 @@
 				</div>
 
 				<nav class="flex items-center gap-4">
+					<!-- resolve() keeps the links correct if the app is ever served
+					     under a base path; a bare href would silently break. -->
 					<a
-						href="/"
+						href={resolve('/')}
 						class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
 					>
 						Check
 					</a>
 					<a
-						href="/health"
+						href={resolve('/health')}
 						class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
 					>
 						Health

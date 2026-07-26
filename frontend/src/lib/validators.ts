@@ -8,11 +8,16 @@ export const ipSchema = z
 			const parts = ip.split('.');
 			if (parts.length !== 4) return false;
 			return parts.every((part) => {
-				const num = parseInt(part, 10);
-				return !isNaN(num) && num >= 0 && num <= 255;
+				// The octet must be digits only. parseInt alone accepts trailing
+				// garbage ("1x" -> 1), which let "1x.2.3.4" through to the backend.
+				if (!/^\d{1,3}$/.test(part)) return false;
+				const num = Number(part);
+				return num >= 0 && num <= 255;
 			});
 		},
-		{ message: 'Invalid IP address format' }
+		// IPv6 is intentionally rejected: the configured DNSBL zones are IPv4-only,
+		// and the backend rejects it too.
+		{ message: 'Invalid IPv4 address format' }
 	);
 
 export const domainSchema = z
@@ -21,8 +26,7 @@ export const domainSchema = z
 	.refine(
 		(domain) => {
 			// Basic domain validation
-			const domainRegex =
-				/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+			const domainRegex = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 			return domainRegex.test(domain);
 		},
 		{ message: 'Invalid domain format' }

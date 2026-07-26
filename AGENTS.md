@@ -53,7 +53,7 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 ### Version Information
 
 - Version is stored in `main.go` as package-level variable `version`
-- Default value: `"1.5.0"` (change this for releases)
+- Default value: `"1.6.0"` (change this for releases)
 - Can be overridden at build time: `go build -ldflags "-X main.version=x.y.z"`
 - Displayed in `/health` endpoint response
 
@@ -64,7 +64,7 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 All blacklist checks use `sync.WaitGroup` with goroutines for parallel DNS queries. Each goroutine:
 
 - Performs DNS lookup via custom resolver with random nameserver selection
-- Filters out `127.0.0.1` and `127.255.255.255` from results (DNSBL-specific false positives)
+- Filters the DNSBL sentinel replies out of the result via `removeIPFromSlice()` (see "DNSBL Response Codes"), and turns a refusal code into an error rather than a listing
 - Updates the shared map `blacklistsActive` **and** the shared `blacklisted` flag when blacklisted — both writes happen under the same `sync.Mutex`, since several goroutines reach that branch concurrently
 - Reports errors via buffered channel `errorCh`
 
@@ -112,7 +112,8 @@ Use `logRequest()` helper function for consistent logging across all handlers
 - `cacheControlMaxAge` - Client-side cache hint via HTTP header (seconds)
 - `maxCustomBlacklists` - Maximum blacklists allowed in POST requests (default 20)
 - `maxCustomNameservers` - Maximum nameservers allowed in POST requests (default 3)
-- `nameServers` - Space-separated list of DNS resolver IPs
+- `nameServers` - Space-separated list of DNS resolver IPs. Empty (the shipped default) selects the system resolver, which is what lets a fresh clone work anywhere
+- `trustProxyHeaders` - Whether `X-Forwarded-For` / `X-Real-IP` may be trusted for the logged client IP (default `false`)
 - `listenPort` - HTTP server port (default ":8080")
 - `redisMaxIdle` / `redisMaxActive` - Connection pool sizing (defaults 8 / 64)
 - `redisConnTimeout` - Connect/read/write timeout for Redis in seconds (default 2)
@@ -120,6 +121,18 @@ Use `logRequest()` helper function for consistent logging across all handlers
 
 Every parameter except the blacklists is optional: `applyConfigDefaults()` fills
 in the tuning keys so a `config.toml` written before they existed stays valid.
+
+**`applyConfigDefaults()` must cover every key, not just recent additions.** A
+missing key reads back as zero, and several of those zeros disable the service
+rather than degrading it: `maxStringLength = 0` rejects every IP and domain as "too
+long", `dnsQueryTimeout = 0` hands an already-expired context to every lookup,
+`maxRequestBodySize = 0` rejects every POST body, `redisCacheTTL = 0` makes
+`SET ... EX` fail so nothing is ever cached, and `listenPort = ""` silently binds
+`:80`. When adding a config key, add its default in the same commit.
+
+`validateConfig()` runs at startup and refuses to start on a configuration that
+cannot produce correct results (no blacklists at all, or a `nameServers` entry that
+is not an IP). Failing loudly beats serving nonsense from a broken resolver.
 - Cached response includes all fields: `BlackListed`, `BlackList`, `ValidIP`/`ValidDomain`, `TimeTaken`
 - Set `Cached: true` in response when served from Redis
 
@@ -142,6 +155,16 @@ sees real values. Tests must call `startBackgroundMonitors()` in their setup.
 
 Every request logs to stdout in JSON format with: `CurrentTime`, `Method`, `Param`, `MemoryAlloc`, `NumGC`, `TimeTaken`, `Cached`, `ClientIP`, `Redis` status, `RedisConnections`. Parse with `jq` for debugging. The `MemoryAlloc`, `NumGC`, `Redis` and `RedisConnections` fields come from the background monitors and may be up to one interval old.
 
+**One entry per line: use `json.Marshal`, never `json.MarshalIndent`.** Log
+collectors (Loki, Fluent Bit, CloudWatch) parse newline-delimited JSON, and the
+indented form split every entry into a dozen unrelated lines.
+
+**Never log a full request body.** `logRequest` passes it through
+`truncateForLog()` (`maxLoggedBodyBytes`), and the rejected-request call sites pass
+`""`: the body is up to `maxRequestBodySize` of unsanitised client input, so logging
+it whole enables log injection and stores arbitrary user data. The specific
+rejection reason is already in `errors[]`.
+
 ## Development Workflow
 
 ### Build & Run
@@ -149,8 +172,10 @@ Every request logs to stdout in JSON format with: `CurrentTime`, `Method`, `Para
 ```bash
 make build    # Compiles to bin/multicheck with stripped binary
 make run      # Runs binary piping output through jq
-make test     # Runs go test with colored output and icons (verbose)
-make test-quiet # Runs tests with summary only (minimal output, no JSON logs)
+make test     # Runs the unit tests with colored output and icons (verbose)
+make test-quiet # Runs the unit tests with summary only (minimal output, no JSON logs)
+make test-race  # Runs the unit tests under the race detector
+make test-integration # Runs the integration tests (needs Redis and live DNS)
 ```
 
 ### Test Output
@@ -163,7 +188,7 @@ Tests now include visual enhancements for better readability:
   - `make test`: Full verbose output with JSON logs and colors
   - `make test-quiet`: Clean summary showing only test names and results
 - Output uses ANSI escape codes and works in most modern terminals
-[main_test.go](../main_test.go) contains comprehensive tests:
+[main_integration_test.go](../main_integration_test.go) contains the endpoint tests (build tag `integration`):
 
 | Test Function | Endpoint | Input | Expected Assertion |
 |--------------|----------|-------|-------------------|
@@ -186,7 +211,9 @@ Tests now include visual enhancements for better readability:
 
 - DNSBL servers return IPs in `127.0.0.x` range to indicate positive matches
 - Different codes indicate different types of listings (e.g., 127.0.0.2 = spam, 127.0.0.11 = XBL)
+- `removeIPFromSlice()` filters the sentinel replies listed in `dnsblSentinelCodes` and returns them separately from the genuine listings
 - `127.0.0.1` and `127.255.255.255` are filtered as they're sometimes false positives
+- `127.255.255.252-254` mean **the query was refused** (public resolver, or over quota) — not "listed". `isQueryRefused()` turns them into an entry in `errorList` so the result is reported as unknown instead of as a confident false positive
 - Always preserve other `127.x.x.x` responses - they're valid blacklist indicators
 
 ### Validation:**
@@ -209,14 +236,28 @@ Tests now include visual enhancements for better readability:
 - Verify specific DNSBL response codes (not just presence in blacklist)
 - Fail if expected IP code doesn't match actual response
 
+### Continuous Integration
+
+`.github/workflows/docker-publish.yml` gates image publishing behind two parallel
+verification jobs: `verify-backend` (gofmt, `go vet` with and without the
+`integration` tag, `go test -race`) and `verify-frontend` (`npm ci`, `check`,
+`lint`, `build`). The `build` job carries `needs: [verify-backend, verify-frontend]`
+— **do not remove it**: images were previously published from code no automated
+check had ever seen.
+
+Integration tests are deliberately excluded from CI: they need a Redis instance and
+live DNS access to third-party DNSBL servers whose answers the project does not
+control.
+
 ### Docker Deployment
 
 ```bash
-docker-compose up    # Starts multicheck + redis containers
+docker compose up    # Starts multicheck + valkey containers
 ```
 
 - Service exposed on port 8080
-- Depends on Redis at `redis:6379` (container network)
+- The cache is **Valkey** (Redis-compatible), not Redis
+- All services use `network_mode: host`, so the backend reaches the cache at `127.0.0.1:6379` — there is no container network and no `redis:6379` hostname
 - Dockerfile uses multi-stage build: Go builder → Alpine runtime
 
 ### Concurrency Safety
@@ -228,23 +269,30 @@ docker-compose up    # Starts multicheck + redis containers
 
 ## When Making Changes
 
-1. **Update tests** - Add/modify tests in main_test.go for new functionality
+1. **Update tests** - Add unit tests for new logic; extend the integration suite only when the behaviour genuinely needs Redis or live DNS
 2. **Update README.md** - Document new endpoints, parameters, configuration options
-3. **Update this file** - Keep copilot-instructions.md synchronized with architecture changes
+3. **Update this file** - Keep AGENTS.md synchronized with architecture changes
 4. **Add comments** - Explain complex logic, especially concurrency patterns and DNSBL specifics
 5. **Version bump** - Update the `version` variable in main.go when changes affect any public API endpoint, response schema, or configuration format. Do not update it for internal refactors or test-only changes.
 
 ### Testing
 
-[main_test.go](../main_test.go) tests `/health` endpoint. Expects Redis to be running locally. Add tests for blacklist checking by mocking DNS resolver or Redis responses.
+The suite is split in two, and the split must be preserved:
+
+- **Unit tests** — [functions_test.go](../functions_test.go), [handlers_test.go](../handlers_test.go), with the shared environment in [testsupport_test.go](../testsupport_test.go). `TestMain` builds `configuration` in memory, so these need **no `config.toml`, no Redis server and no DNS access**. They cover the pure logic and every request path rejected before DNS or Redis work begins. `make test` runs only these, which is what makes them usable in CI.
+- **Integration tests** — [main_integration_test.go](../main_integration_test.go), behind the `//go:build integration` tag. These read the real `config.toml`, need a reachable Redis instance and query third-party DNSBL servers, asserting on sentinel codes those servers control. `setupTestWithResolver(t)` calls `t.Skip` when Redis is unreachable, so they never fail for environmental reasons. Run with `make test-integration`.
+
+**Put a new test in the unit file unless it genuinely cannot work without Redis or live DNS.** A test added to the integration file is a test CI will never run.
 
 ## API Endpoints
 
 - `GET /` - Lists all endpoints and configuration
-- `GET /health` - Health check with Redis status and uptime
-- `GET /ip/{ip}` - Check IP against blacklists (validates with `net.ParseIP`)
+- `GET /health` - Health check with Redis status and uptime. Always answers `200`: the service is designed to run without Redis
+- `GET /ip/{ip}` - Check IP against blacklists (validates with `isIPv4`, **not** `net.ParseIP`: IPv6 has no valid DNSBL reversal)
 - `GET /domain/{domain}` - Check domain against blacklists (validates with `validator.IsValidDomain`)
-- `GET /clear-cache/{key}` - Delete specific cache entry by key
+- `POST /ip/check` - Check IP against a caller-supplied blacklist array
+- `POST /domain/check` - Check domain against a caller-supplied blacklist array
+- `DELETE /clear-cache/{key}` - Delete specific cache entry by key. **Not GET**: the operation is destructive and over GET it is reachable by browser prefetch and cross-site requests. The key must be one this service could have written (`isOwnCacheKey`), otherwise `400`
 
 ## Important Implementation Notes
 
@@ -254,7 +302,14 @@ Update `ipBlacklist` or `domainBlacklist` arrays in [config.toml](../config.toml
 
 ### Response Headers
 
-All endpoints set `Content-Type: application/json` and `Cache-Control: max-age=<cacheControlMaxAge>` from config.
+All endpoints set `Content-Type: application/json`.
+
+`Cache-Control: max-age=<cacheControlMaxAge>` is set via `setCacheControl(w)` **only
+on the success path** of `GET /` , `GET /ip/{ip}` and `GET /domain/{domain}`. Never
+set it before the validation branches: doing so declared `400` responses cacheable,
+so a client that once sent a malformed request kept replaying the error from its own
+cache for a whole hour. POST responses carry no `Cache-Control` at all — the header
+is meaningless for a non-idempotent request.
 
 ### Error Handling
 
@@ -276,9 +331,27 @@ Package-level variables: `configuration`, `c` (Redis pool), `resolver`, `nameser
 
 IPs must be reversed for DNSBL queries: `1.2.3.4` becomes `4.3.2.1.dnsbl.example.org`. See `reverseIP()` function.
 
+**IPv4 only.** Validate with `isIPv4()`, never with a bare `net.ParseIP() != nil`:
+`net.ParseIP` accepts IPv6, which has no valid reversal into the configured
+(IPv4-only) DNSBL zones. Before this was enforced, an IPv6 address came back
+`ValidIP: true` with a confident "not blacklisted" derived from a nonsensical query.
+`reverseIP()` returns an empty string for non-IPv4 input as a second line of defence.
+
 ### Cache Clearing Security
 
-The `/clear-cache/{key}` endpoint has no authentication. Do not extend it to support wildcard or bulk deletion. Consider adding rate limiting or restricting to localhost if deploying publicly.
+The `/clear-cache/{key}` endpoint has no authentication.
+
+- It is registered as **`DELETE`**, not `GET`. A destructive operation over GET is reachable by browser prefetch and by a cross-site request. Do not move it back.
+- `isOwnCacheKey()` restricts deletion to keys this service could have written (an IPv4 address, a valid domain, or a `post:ip:` / `post:domain:` prefix). Without it, any client could delete arbitrary keys from a Redis database shared with other applications.
+- Do not extend it to support wildcard or bulk deletion. Consider adding rate limiting or restricting to localhost if deploying publicly.
+
+### Graceful Shutdown
+
+`main()` serves in a goroutine and waits on `signal.NotifyContext` for `SIGINT`/`SIGTERM`, then calls `srv.Shutdown` with a bounded `shutdownGracePeriod` and closes the Redis pool. Do not go back to a bare blocking `srv.ListenAndServe()`: it truncates in-flight requests on every Docker or Kubernetes stop.
+
+### Client IP
+
+Use `clientIPFrom(r)`, not `r.RemoteAddr`: behind the nginx front end in this repo the latter is always the proxy. It honours `X-Forwarded-For` / `X-Real-IP` only when `trustProxyHeaders` is enabled — trusting them unconditionally lets any client forge its own address.
 
 ## Frontend Architecture
 
@@ -351,7 +424,14 @@ npm run build            # Production build
 npm run preview          # Test production build
 npm run check            # TypeScript type checking
 npm run format           # Format code with Prettier
+npm run lint             # Prettier check + ESLint
 ```
+
+`eslint.config.js` is an ESLint 9 flat config. The two prettier entries must stay
+last: they switch off the stylistic rules that would otherwise contradict
+`npm run format`. `package.json` and `package-lock.json` are in `.prettierignore`
+because npm owns their formatting — without that, every `npm run format` rewrote
+them and turned a version bump into a full-file diff.
 
 ### Frontend-Backend Integration
 
@@ -368,7 +448,7 @@ When modifying any Go response struct that is serialized to JSON:
 2. Update the TypeScript interface in `src/lib/types.ts`
 3. Update the Zod schema in `src/lib/validators.ts` if the field is user-supplied
 4. Update README.md API documentation
-5. Add or update tests in main_test.go
+5. Add or update tests in functions_test.go / handlers_test.go (unit) or main_integration_test.go (needs Redis or live DNS)
 
 ### When Working on Frontend
 

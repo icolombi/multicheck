@@ -5,9 +5,10 @@
 	interface Props {
 		items: HistoryItem[];
 		onSelect: (item: HistoryItem) => void;
+		onClear: () => void;
 	}
 
-	let { items, onSelect }: Props = $props();
+	let { items, onSelect, onClear }: Props = $props();
 
 	function formatTime(timestamp: number): string {
 		const date = new Date(timestamp);
@@ -23,9 +24,12 @@
 		return `${days}d ago`;
 	}
 
+	// `items` is a plain (non-bindable) prop owned by the parent, so assigning to it
+	// here would not propagate: clearing has to go back up through a callback,
+	// following the same pattern as onSelect.
 	function clearHistory() {
 		if (confirm('Clear all history?')) {
-			items = [];
+			onClear();
 		}
 	}
 
@@ -33,7 +37,7 @@
 		return item.result.BlackListed ? 'border-destructive/50' : 'border-success/50';
 	}
 
-	function getStatusIcon(item: HistoryItem) {
+	function getTypeIcon(item: HistoryItem) {
 		return item.type === 'ip' ? Network : Globe;
 	}
 </script>
@@ -49,6 +53,7 @@
 				onclick={clearHistory}
 				class="text-sm text-muted-foreground hover:text-foreground transition-colors"
 				title="Clear history"
+				aria-label="Clear history"
 			>
 				<Trash2 class="h-4 w-4" />
 			</button>
@@ -62,8 +67,8 @@
 		</div>
 	{:else}
 		<div class="space-y-2 max-h-[600px] overflow-y-auto">
-			{#each items as item (item.timestamp)}
-				{@const Icon = getStatusIcon(item)}
+			{#each items as item (item.id)}
+				{@const Icon = getTypeIcon(item)}
 				<button
 					onclick={() => onSelect(item)}
 					class={`w-full text-left rounded-lg border ${getStatusClass(item)} bg-card p-3 hover:bg-accent transition-colors`}

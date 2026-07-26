@@ -29,7 +29,10 @@ func ReadConfig(c Config) (configuration Config) {
 		configPath = cp
 	}
 
-	viper.SetConfigName("config.toml") // config file name without extension
+	// Viper expects the config name *without* the extension; passing "config.toml"
+	// only worked by accident because SetConfigType made it fall back to an
+	// exact-name lookup.
+	viper.SetConfigName("config")
 	viper.SetConfigType("toml")
 	viper.AddConfigPath(configPath)
 	viper.AutomaticEnv() // read value ENV variable
@@ -63,6 +66,7 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.RedisConnTimeout = viper.GetInt("redisConnTimeout")
 	configuration.RedisHealthCheckInterval = viper.GetInt("redisHealthCheckInterval")
 	configuration.MemStatsInterval = viper.GetInt("memStatsInterval")
+	configuration.TrustProxyHeaders = viper.GetBool("trustProxyHeaders")
 
 	// Apply defaults for the optional tuning parameters, so configuration files
 	// written before these keys existed keep working unchanged.
@@ -71,9 +75,60 @@ func ReadConfig(c Config) (configuration Config) {
 	return configuration
 }
 
-// applyConfigDefaults fills in the optional tuning parameters that were added
-// after the initial configuration format, keeping older config.toml files valid.
+// applyConfigDefaults fills in every optional tuning parameter, keeping older
+// config.toml files valid.
+//
+// This must cover all of them, not just the most recent additions: a missing key
+// reads back as zero, and several of those zeros silently disable the service
+// rather than degrading it. maxStringLength = 0 rejects every IP and domain as
+// "too long", dnsQueryTimeout = 0 hands an already-expired context to every
+// lookup, maxRequestBodySize = 0 rejects every POST body, redisCacheTTL = 0 makes
+// SET ... EX fail so nothing is ever cached, and the httpXxxTimeout values simply
+// turn the corresponding protections off.
 func applyConfigDefaults(c *Config) {
+	if c.CacheControlMaxAge <= 0 {
+		c.CacheControlMaxAge = 3600
+	}
+	if c.RedisCacheTTL <= 0 {
+		c.RedisCacheTTL = 300
+	}
+	if c.MaxCustomBlacklists <= 0 {
+		c.MaxCustomBlacklists = 20
+	}
+	if c.MaxCustomNameservers <= 0 {
+		c.MaxCustomNameservers = 3
+	}
+	if c.MaxRequestBodySize <= 0 {
+		c.MaxRequestBodySize = 1048576 // 1 MB
+	}
+	if c.MaxStringLength <= 0 {
+		c.MaxStringLength = 253 // DNS name length limit
+	}
+	if c.DNSQueryTimeout <= 0 {
+		c.DNSQueryTimeout = 5
+	}
+	if c.HTTPReadTimeout <= 0 {
+		c.HTTPReadTimeout = 30
+	}
+	if c.HTTPWriteTimeout <= 0 {
+		c.HTTPWriteTimeout = 30
+	}
+	if c.HTTPIdleTimeout <= 0 {
+		c.HTTPIdleTimeout = 60
+	}
+	if c.HTTPReadHeaderTimeout <= 0 {
+		c.HTTPReadHeaderTimeout = 10
+	}
+	if c.listenPort == "" {
+		// Without this the server would silently bind :80.
+		c.listenPort = ":8080"
+	}
+	if c.RedisHost == "" {
+		c.RedisHost = "127.0.0.1"
+	}
+	if c.RedisPort <= 0 {
+		c.RedisPort = 6379
+	}
 	if c.RedisMaxIdle <= 0 {
 		c.RedisMaxIdle = 8
 	}
@@ -89,6 +144,23 @@ func applyConfigDefaults(c *Config) {
 	if c.MemStatsInterval <= 0 {
 		c.MemStatsInterval = 10
 	}
+}
+
+// validateConfig rejects a configuration that would produce a broken runtime.
+// It runs at startup only, so failing loudly here is preferable to serving
+// nonsense results: an invalid nameserver would otherwise build a resolver that
+// fails every single lookup.
+func validateConfig(c *Config) error {
+	if len(c.ipBlacklist) == 0 && len(c.domainBlacklist) == 0 {
+		return fmt.Errorf("both ipBlacklist and domainBlacklist are empty: nothing can be checked")
+	}
+	// An empty nameServers list is legitimate: it selects the system resolver.
+	if len(c.nameServers) > 0 {
+		if valid, errMsg := validateNameservers(c.nameServers, len(c.nameServers)); !valid {
+			return fmt.Errorf("invalid nameServers: %s", errMsg)
+		}
+	}
+	return nil
 }
 
 // Cached process and Redis state, refreshed by the background monitors.
@@ -183,17 +255,56 @@ func bToKb(b uint64) uint64 {
 	return b / 1024
 }
 
-// Function to remove IPs 127.0.0.1 and 127.255.255.255 from a slice
-func removeIPFromSlice(slice []net.IP) []net.IP {
-	var result []net.IP
+// dnsblSentinelCodes are replies that do not mean "listed".
+//
+// 127.0.0.1 and 127.255.255.255 are long-standing false positives. The
+// 127.255.255.252-254 range is how Spamhaus (and others) signal that the query
+// itself was refused — typically because the resolver is a public one, or is over
+// its query quota. Counting those as a listing produces confident false positives
+// exactly when the service is being rate limited.
+var dnsblSentinelCodes = []string{
+	"127.0.0.1",
+	"127.255.255.252",
+	"127.255.255.253",
+	"127.255.255.254",
+	"127.255.255.255",
+}
 
-	for _, ip := range slice {
-		if !ip.Equal(net.ParseIP("127.0.0.1")) &&
-			!ip.Equal(net.ParseIP("127.255.255.255")) {
-			result = append(result, ip)
+// isDNSBLSentinel reports whether a DNSBL reply is a sentinel rather than a listing.
+func isDNSBLSentinel(ip net.IP) bool {
+	for _, code := range dnsblSentinelCodes {
+		if ip.Equal(net.ParseIP(code)) {
+			return true
 		}
 	}
-	return result
+	return false
+}
+
+// removeIPFromSlice drops the DNSBL sentinel replies from a lookup result,
+// returning the remaining (genuine) listings and the sentinels that were removed
+// so the caller can report a refused query instead of silently dropping it.
+func removeIPFromSlice(slice []net.IP) (result []net.IP, sentinels []net.IP) {
+	for _, ip := range slice {
+		if isDNSBLSentinel(ip) {
+			sentinels = append(sentinels, ip)
+			continue
+		}
+		result = append(result, ip)
+	}
+	return result, sentinels
+}
+
+// isQueryRefused reports whether the sentinel replies indicate the DNSBL rejected
+// the query (as opposed to the harmless 127.0.0.1 / 127.255.255.255 noise).
+func isQueryRefused(sentinels []net.IP) bool {
+	for _, ip := range sentinels {
+		if ip.Equal(net.ParseIP("127.255.255.252")) ||
+			ip.Equal(net.ParseIP("127.255.255.253")) ||
+			ip.Equal(net.ParseIP("127.255.255.254")) {
+			return true
+		}
+	}
+	return false
 }
 
 // Validates a list of nameservers (must be valid IPs)
@@ -359,13 +470,18 @@ func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP 
 	defer cancel()
 
 	value, err := resolverToUse.LookupIP(ctx, "ip4", reverseIP+"."+blacklist+".")
-	value = removeIPFromSlice(value)
+	value, sentinels := removeIPFromSlice(value)
 
 	if err != nil {
 		//fmt.Println("Error: " + err.Error())
 		if !strings.Contains(err.Error(), ": no such host") {
 			error = err.Error()
 		}
+	}
+	// A refused query is reported as an error rather than being silently dropped:
+	// the result for this blacklist is unknown, not "clean".
+	if isQueryRefused(sentinels) {
+		error = fmt.Sprintf("%s refused the query (resolver blocked or over quota)", blacklist)
 	}
 	if len(value) != 0 {
 		//fmt.Print("Blacklisted A: ")
@@ -380,8 +496,24 @@ func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP 
 	errorCh <- error
 }
 
-// Function to convert an IP address to a reverse domain name (i.e. "127.0.0.1" > "1.0.0.127")
+// isIPv4 reports whether the address is an IPv4 address usable for DNSBL queries.
+//
+// net.ParseIP alone is not enough: it accepts IPv6, which reverseIP cannot handle
+// and which none of the configured blacklist zones serve. Callers must reject
+// anything this rejects, otherwise the query is built from an unreversed address
+// and the resulting "not listed" answer is meaningless.
+func isIPv4(ipAddress string) bool {
+	parsed := net.ParseIP(ipAddress)
+	return parsed != nil && parsed.To4() != nil
+}
+
+// Function to convert an IPv4 address to a reverse domain name (i.e. "127.0.0.1" > "1.0.0.127").
+// Returns an empty string for anything that is not IPv4, so a caller that skipped
+// validation produces no query rather than a nonsensical one.
 func reverseIP(ipAddress string) string {
+	if !isIPv4(ipAddress) {
+		return ""
+	}
 	parts := strings.Split(ipAddress, ".")
 	reversedParts := make([]string, len(parts))
 	for i := 0; i < len(parts); i++ {
@@ -446,13 +578,18 @@ func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domain
 	defer cancel()
 
 	value, err := resolverToUse.LookupIP(ctx, "ip4", domainName+"."+blacklist+".")
-	value = removeIPFromSlice(value)
+	value, sentinels := removeIPFromSlice(value)
 
 	if err != nil {
 		//fmt.Println("Error: " + err.Error())
 		if !strings.Contains(err.Error(), ": no such host") {
 			error = err.Error()
 		}
+	}
+	// A refused query is reported as an error rather than being silently dropped:
+	// the result for this blacklist is unknown, not "clean".
+	if isQueryRefused(sentinels) {
+		error = fmt.Sprintf("%s refused the query (resolver blocked or over quota)", blacklist)
 	}
 
 	if len(value) != 0 {

@@ -1,12 +1,19 @@
 .DEFAULT_GOAL := help
+
+.PHONY: help build run test test-quiet test-race test-integration test-cache-key \
+	build-compose start stop logs \
+	install-frontend run-frontend build-frontend preview-frontend
+
 help:
 	@echo "Available commands:"
 	@echo "Backend:"
-	@echo "  make build          - Build the multicheck binary"
-	@echo "  make run            - Run the multicheck binary and format output with jq"
-	@echo "  make test           - Run tests for the multicheck package (verbose with colors)"
-	@echo "  make test-quiet     - Run tests with summary only (minimal output)"
-	@echo "  make test-cache-key - Run cache key integration tests"
+	@echo "  make build            - Build the multicheck binary"
+	@echo "  make run              - Run the multicheck binary and format output with jq"
+	@echo "  make test             - Run the unit tests (no Redis or network needed)"
+	@echo "  make test-quiet       - Run the unit tests with summary only (minimal output)"
+	@echo "  make test-race        - Run the unit tests under the race detector"
+	@echo "  make test-integration - Run the integration tests (needs Redis and live DNS)"
+	@echo "  make test-cache-key   - Run cache key integration tests"
 	@echo ""
 	@echo "Frontend:"
 	@echo "  make install-frontend - Install frontend dependencies"
@@ -20,11 +27,12 @@ help:
 	@echo "  make stop           - Stop the docker compose services"
 	@echo "  make logs           - Follow logs from running containers"
 build:
-	@go build -o ./bin/multicheck
-	@strip ./bin/multicheck
+	@go build -ldflags "-s -w" -o ./bin/multicheck
 run:
 	@./bin/multicheck | jq
 
+# Unit tests only: they run against the hermetic environment installed by TestMain,
+# so they need neither a Redis server nor DNS access and are safe to run in CI.
 test:
 	@go test -v 2>&1 | sed \
 		-e 's/^=== RUN/\x1b[1;34m▶\x1b[0m \x1b[1mRUN\x1b[0m/g' \
@@ -48,7 +56,15 @@ test-quiet:
 		-e 's/^FAIL$$/\n\x1b[1;41m\x1b[97m FAILURE \x1b[0m Some tests failed!\n/g' \
 		-e 's/^ok  \(.*\)/\n\x1b[1;32m✓ OK\x1b[0m  \1\n/g' \
 		-e 's/^FAIL\t\(.*\)/\n\x1b[1;31m✗ FAIL\x1b[0m  \1\n/g'
-	
+
+test-race:
+	@go test -race ./...
+
+# Needs a reachable Redis instance and live DNS access to third-party DNSBL
+# servers. Individual tests skip themselves when Redis is unavailable.
+test-integration:
+	@go test -tags integration -v ./...
+
 build-compose:
 	@export docker_IGNORE_CGROUPSV1_WARNING=1 && \
 	docker compose up --build # --force-recreate

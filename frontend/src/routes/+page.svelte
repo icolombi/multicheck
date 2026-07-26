@@ -14,6 +14,11 @@
 		historyItems = [item, ...historyItems.slice(0, 19)]; // Keep last 20
 		selectedItem = null;
 	}
+
+	function handleHistoryClear() {
+		historyItems = [];
+		selectedItem = null;
+	}
 </script>
 
 <svelte:head>
@@ -26,6 +31,10 @@
 		<CheckForm {selectedItem} onCheckComplete={handleCheckComplete} />
 	</div>
 	<div>
-		<HistoryPanel items={historyItems} onSelect={handleHistorySelect} />
+		<HistoryPanel
+			items={historyItems}
+			onSelect={handleHistorySelect}
+			onClear={handleHistoryClear}
+		/>
 	</div>
 </div>

@@ -40,10 +40,19 @@ httpIdleTimeout = 60 # Max time a keep-alive connection can be idle in seconds
 
 httpReadHeaderTimeout = 10 # Max time to read request headers in seconds (defends against slow-header attacks)
 
-# DNS servers used for blacklist lookups. Leave empty ("") to use the
-# system default resolver (/etc/resolv.conf — in Kubernetes, the cluster DNS).
-nameServers = """
-192.168.179.39"""
+# Trust X-Forwarded-For / X-Real-IP for the logged client IP.
+# Enable ONLY when the service is reachable exclusively through a reverse proxy
+# that overwrites those headers: otherwise any client can forge its own address.
+trustProxyHeaders = false
+
+# DNS servers used for blacklist lookups. Space- or newline-separated IP addresses.
+# Empty (the default) uses the system resolver (/etc/resolv.conf — in Kubernetes,
+# the cluster DNS), which keeps the shipped configuration working on any machine.
+#
+# Prefer a dedicated resolver in production: DNSBL providers rate-limit and
+# eventually block queries coming from large public resolvers, and a blocked
+# resolver answers with a refusal code rather than a real result.
+nameServers = ""
 
 listenPort = ":8080"
 

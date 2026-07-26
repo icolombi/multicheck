@@ -124,6 +124,10 @@ GET /ip/{ip}
 
 Checks if an IP address is present in any of the configured blacklists.
 
+Only IPv4 is accepted. The configured DNSBL zones are IPv4-only, and an IPv6
+address has no valid reversal into one of them, so it is rejected with `400`
+rather than answered with a meaningless "not listed".
+
 **Example:**
 
 ```bash
@@ -225,7 +229,8 @@ Checks an IP address against a custom list of blacklists, overriding the default
 
 **Validation Rules:**
 
-- `ip`: Must be a valid IP address format
+- `ip`: Must be a valid IPv4 address. IPv6 is rejected: the configured blacklists
+  are IPv4-only zones
 - `blacklists`: Array of DNS blacklist domains
   - Cannot be empty
   - Maximum 20 blacklists (configurable via `maxCustomBlacklists` in config.toml)
@@ -365,15 +370,25 @@ Checks the service status, Redis connectivity, and uptime.
   "Alive": true,
   "Redis": true,
   "RedisConnections": 1,
+  "CachedItems": 42,
   "Uptime": 3600000000000,
-  "GoVersion": "go1.25.5"
+  "GoVersion": "go1.26.1",
+  "Version": "1.6.0",
+  "MemoryAlloc": 2048
 }
 ```
+
+`Uptime` is a `time.Duration` in nanoseconds; `MemoryAlloc` is in KB and comes from
+the background memory monitor, so it may be up to one sampling interval old.
+
+The endpoint always answers `200` and reports Redis availability in the body: the
+service is designed to operate without Redis, serving every request with a live DNS
+lookup.
 
 ### Clear Cache
 
 ```bash
-GET /clear-cache/{key}
+DELETE /clear-cache/{key}
 ```
 
 Removes a specific key from the Redis cache.
@@ -382,13 +397,28 @@ Removes a specific key from the Redis cache.
 
 ```bash
 # Clear GET endpoint cache (simple key)
-curl http://localhost:8080/clear-cache/1.2.3.4
-curl http://localhost:8080/clear-cache/example.com
+curl -X DELETE http://localhost:8080/clear-cache/1.2.3.4
+curl -X DELETE http://localhost:8080/clear-cache/example.com
 
 # Clear POST endpoint cache using CacheKey from response
-curl http://localhost:8080/clear-cache/post:ip:1.2.3.4:a3f5c8d12e9b7f6a
-curl http://localhost:8080/clear-cache/post:domain:example.com:f7b2d9e4c1a8f563
+curl -X DELETE http://localhost:8080/clear-cache/post:ip:1.2.3.4:a3f5c8d12e9b7f6a
+curl -X DELETE http://localhost:8080/clear-cache/post:domain:example.com:f7b2d9e4c1a8f563
 ```
+
+**Status codes:**
+
+| Code | Meaning |
+|------|---------|
+| `200` | The key was deleted |
+| `400` | The key is not one this service could have written (see below) |
+| `500` | Redis returned an error on the delete |
+| `503` | Redis is unavailable |
+
+**Accepted keys:** an IPv4 address, a valid domain name, or a key prefixed with
+`post:ip:` / `post:domain:`. Anything else is rejected with `400`. The endpoint is
+unauthenticated and deletes by exact key, so this restriction is what keeps it from
+being used to delete entries belonging to other applications sharing the same Redis
+database.
 
 **Note:** All API responses include a `CacheKey` field containing the exact Redis key used for caching. Use this value directly with the `/clear-cache/{key}` endpoint to delete cached entries. For POST endpoints, the cache key includes a hash generated from the sorted blacklist array.
 
@@ -416,14 +446,25 @@ cacheControlMaxAge = 3600
 # Redis cache TTL (seconds)
 redisCacheTTL = 300
 
-# Maximum custom blacklists allowed in POST requests
-maxCustomBlacklists = 20
+# Request limits
+maxCustomBlacklists = 20     # Max blacklists in a POST request
+maxCustomNameservers = 3     # Max nameservers in a POST request
+maxRequestBodySize = 1048576 # Max POST body in bytes
+maxStringLength = 253        # Max length of a domain name (DNS standard)
 
-# DNS nameservers to use
-nameServers = """
-8.8.4.4
-8.8.8.8
-"""
+# Timeouts (seconds)
+dnsQueryTimeout = 5
+httpReadTimeout = 30
+httpWriteTimeout = 30
+httpIdleTimeout = 60
+httpReadHeaderTimeout = 10
+
+# DNS nameservers to use. Empty uses the system resolver (/etc/resolv.conf).
+nameServers = ""
+
+# Trust X-Forwarded-For / X-Real-IP for the logged client IP.
+# Enable ONLY behind a reverse proxy that overwrites those headers.
+trustProxyHeaders = false
 
 # Redis configuration
 redisHost = "127.0.0.1"
@@ -444,15 +485,47 @@ memStatsInterval = 10        # Memory sampling interval in seconds
 listenPort = ":8080"
 ```
 
-All the parameters above are optional except the blacklists: the pool and
-monitor settings fall back to the defaults shown here when missing, so an older
-`config.toml` keeps working after an upgrade.
+### Defaults
+
+Every parameter except the blacklists is optional. A missing key falls back to the
+value below, so a `config.toml` written before a key existed keeps working after an
+upgrade:
+
+| Parameter | Default | Parameter | Default |
+|-----------|---------|-----------|---------|
+| `cacheControlMaxAge` | `3600` | `httpReadTimeout` | `30` |
+| `redisCacheTTL` | `300` | `httpWriteTimeout` | `30` |
+| `maxCustomBlacklists` | `20` | `httpIdleTimeout` | `60` |
+| `maxCustomNameservers` | `3` | `httpReadHeaderTimeout` | `10` |
+| `maxRequestBodySize` | `1048576` | `redisHost` | `127.0.0.1` |
+| `maxStringLength` | `253` | `redisPort` | `6379` |
+| `dnsQueryTimeout` | `5` | `redisMaxIdle` | `8` |
+| `listenPort` | `:8080` | `redisMaxActive` | `64` |
+| `trustProxyHeaders` | `false` | `redisConnTimeout` | `2` |
+| `redisHealthCheckInterval` | `5` | `memStatsInterval` | `10` |
+
+**Startup validation:** the service refuses to start when both blacklists are empty
+or when `nameServers` contains something that is not an IP address. Failing loudly
+at startup is preferable to serving results from a resolver that cannot answer.
+
+**Nameservers:** leaving `nameServers` empty selects the system resolver, which is
+what makes the shipped configuration work on any machine (and, in Kubernetes,
+resolves through the cluster DNS). Prefer a dedicated resolver in production: DNSBL
+providers rate-limit and eventually block queries coming from large public
+resolvers, and a blocked resolver answers with a refusal code rather than a real
+result.
 
 **Background monitors:** Redis availability and memory usage are sampled on a
 timer instead of per request. This keeps a Redis `PING` round-trip and
 `runtime.ReadMemStats` (which stops the world) off the request path. The
 `Redis`, `RedisConnections` and `MemoryAlloc` fields in the logs can therefore be
 up to one interval old; the `/health` endpoint always pings live.
+
+**Running without Redis:** Redis is a cache, not a dependency. If it is unreachable
+at startup the service logs a warning and continues; if it becomes unreachable
+later, cache reads and writes are skipped, `Cached` stays `false` and a descriptive
+entry is added to `Errors[]`. Every request then performs a live DNS lookup, which
+is slower but correct.
 
 ### Environment Variables
 
@@ -528,31 +601,56 @@ make run | jq
 
 ## 🧪 Testing
 
-Multicheck provides two test output formats:
+The suite is split in two, so the everyday command needs nothing but a Go toolchain.
 
-### Verbose output with colors and icons
+### Unit tests
 
 ```bash
-make test
+make test        # verbose, with colors and icons
+make test-quiet  # summary only
+make test-race   # under the race detector
 ```
 
-This command runs all tests with detailed output including:
+These run against a hermetic environment (`testsupport_test.go`): no Redis server,
+no DNS traffic, no `config.toml` on disk. They cover the pure logic — address
+reversal, cache-key construction, DNSBL sentinel filtering, input validation,
+configuration defaults — and every request path that is rejected before any DNS or
+Redis work happens. Safe to run anywhere, including CI.
+
+Output formatting:
 
 - 🔵 **▶** Running test indicator
 - ✅ **✓** Green checkmark for passed tests
 - ❌ **✗** Red cross for failed tests
 - Color-coded summary (green for PASS, red for FAIL)
-- Full JSON logs for debugging
 
-### Minimal output (summary only)
+### Integration tests
 
 ```bash
-make test-quiet
+make test-integration
 ```
 
-This command shows only test names and results without verbose JSON logs, perfect for quick checks.
+Guarded by the `integration` build tag. They need a reachable Redis instance and
+live DNS access, and they assert on sentinel codes that third-party DNSBL servers
+control. Individual tests skip themselves — rather than failing — when Redis is
+unavailable, so the tag is the only thing standing between you and a full run:
 
-Tests verify the correct functioning of endpoints and connectivity with Redis.
+```bash
+docker compose up -d valkey
+make test-integration
+```
+
+## 🔄 Continuous Integration
+
+`.github/workflows/docker-publish.yml` runs on pushes to `master` and on `v*` tags:
+
+1. **`verify-backend`** — `gofmt` check, `go vet` (with and without the `integration` tag), and `go test -race`
+2. **`verify-frontend`** — `npm ci`, `npm run check`, `npm run lint`, `npm run build`
+3. **`build`** — builds and pushes the backend and frontend images to GHCR, and runs **only if both verification jobs pass**
+
+The two verification jobs run in parallel. The integration tests are not part of CI:
+they need a Redis instance and live DNS access to third-party DNSBL servers, whose
+answers are outside the project's control.
 
 ## 🐳 Docker Deployment
 
@@ -565,22 +663,16 @@ docker build -t multicheck .
 ### Run with Docker Compose
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-The `docker-compose.yml` file automatically configures Multicheck and Redis with internal networking.
-
-## 🔧 Using with Podman
-
-The `podman-compose.sh` script is also available for use with Podman:
-
-```bash
-./podman-compose.sh
-```
+The `docker-compose.yml` file starts Multicheck alongside [Valkey](https://valkey.io)
+(a Redis-compatible cache). All services use `network_mode: host`, so the backend
+reaches the cache at `127.0.0.1:6379`.
 
 ## 📝 Utility Files
 
-- `Makefile`: Build automation with commands for backend, frontend, and Docker/Podman
+- `Makefile`: Build automation with commands for backend, frontend, and Docker
 - `curl.sh`: Script with curl request examples
 - `health.sh`: Script for quick health check
 - `ips.txt` / `domains.txt`: Example files with lists of IPs/domains to test
@@ -631,6 +723,7 @@ npm run build        # Production build
 npm run preview      # Test production build
 npm run check        # TypeScript type checking
 npm run format       # Format code with Prettier
+npm run lint         # Prettier check + ESLint
 ```
 
 **Frontend Features:**

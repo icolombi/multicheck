@@ -4,6 +4,23 @@
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<script>
+			// Applied synchronously before first paint. This app is a client-rendered
+			// SPA (ssr = false), so setting the theme from onMount instead would flash
+			// the light theme on every single load.
+			(function () {
+				try {
+					var stored = localStorage.getItem('darkMode');
+					var dark =
+						stored !== null
+							? stored === 'true'
+							: window.matchMedia('(prefers-color-scheme: dark)').matches;
+					if (dark) document.documentElement.classList.add('dark');
+				} catch (e) {
+					// localStorage can throw when cookies are blocked: fall back to light.
+				}
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

@@ -2,14 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dchest/validator"
@@ -71,6 +76,10 @@ type Config struct {
 	// runtime.ReadMemStats off the request path, in seconds.
 	RedisHealthCheckInterval int
 	MemStatsInterval         int
+	// Whether X-Forwarded-For / X-Real-IP may be trusted for the logged client IP.
+	// Only enable it when the service is reachable exclusively through a proxy that
+	// overwrites those headers: otherwise any client can forge its own address.
+	TrustProxyHeaders bool
 }
 
 // Struct to represent the response of an IP object
@@ -158,12 +167,27 @@ var nameservers []string
 var startTime = time.Now()
 
 // version can be set during build with -ldflags "-X main.version=x.y.z"
-var version = "1.5.0"
+var version = "1.6.0"
+
+// How long in-flight requests are given to finish after a termination signal.
+// Sized above the DNS fan-out timeout so a running check is not cut short.
+const shutdownGracePeriod = 15 * time.Second
+
+// Maximum number of request-body bytes copied into the logs. The full body (up to
+// maxRequestBodySize) is unsanitised client input: logging it whole allows log
+// injection and stores arbitrary user data.
+const maxLoggedBodyBytes = 512
 
 func main() {
 	// Start time, used to calculate uptime
 
 	configuration = ReadConfig(configuration)
+
+	// Fail fast on a configuration that cannot produce correct results, instead of
+	// starting up and returning nonsense for every request.
+	if err := validateConfig(&configuration); err != nil {
+		log.Fatalf("main: invalid configuration: %v", err)
+	}
 
 	// Initialize Redis connection after loading configuration
 	c = redisConnect()
@@ -172,19 +196,15 @@ func main() {
 	r := mux.NewRouter()
 
 	// API Endpoints
-	//r.HandleFunc("/items", GetItems).Methods("GET")
-	// r.HandleFunc("/items/{id}", GetItem).Methods("GET")
-	// r.HandleFunc("/items", CreateItem).Methods("POST")
-	// r.HandleFunc("/items/{id}", UpdateItem).Methods("PUT")
-	// r.HandleFunc("/items/{id}", DeleteItem).Methods("DELETE")
-
 	r.HandleFunc("/", RootHandler).Methods("GET")
 	r.HandleFunc("/health", HealthCheckHandler).Methods("GET")
 	r.HandleFunc("/ip/{ip}", GetIp).Methods("GET")
 	r.HandleFunc("/domain/{domain}", GetDomain).Methods("GET")
 	r.HandleFunc("/ip/check", PostCheckIp).Methods("POST")
 	r.HandleFunc("/domain/check", PostCheckDomain).Methods("POST")
-	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("GET")
+	// DELETE, not GET: this operation is destructive, and over GET it is reachable
+	// by browser prefetch and by a cross-site request.
+	r.HandleFunc("/clear-cache/{key}", DelCache).Methods("DELETE")
 
 	// Define a custom resolver to use different name servers than system defaults
 	// List of name servers
@@ -214,7 +234,8 @@ func main() {
 
 	// Start the server
 	//fmt.Println("Server listening...")
-	u, err := json.MarshalIndent(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort}, "", "   ")
+	// Single-line JSON, like every other log entry: see logRequest.
+	u, err := json.Marshal(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort})
 	if err != nil {
 		log.Printf("main: failed to marshal startup log: %v", err)
 	} else {
@@ -231,32 +252,88 @@ func main() {
 		IdleTimeout:       time.Duration(configuration.HTTPIdleTimeout) * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MB max header size
 	}
-	err = srv.ListenAndServe()
+	// Serve in the background so main can wait for a termination signal.
+	// Without this, SIGTERM from Docker or Kubernetes killed in-flight requests.
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+		}
+		close(serveErr)
+	}()
 
-	if err != nil {
-		startLog.Errors = append(startLog.Errors, err.Error())
-		u, err := json.MarshalIndent(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort}, "", "   ")
-		fmt.Println(string(u))
-		log.Fatalln("There's an error with the server", err)
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	} else {
-
-		fmt.Println("Avviato")
-		u, err := json.MarshalIndent(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort}, "", "   ")
+	select {
+	case err := <-serveErr:
 		if err != nil {
-			log.Printf("main: failed to marshal post-start log: %v", err)
-		} else {
-			fmt.Println(string(u))
+			startLog.Errors = append(startLog.Errors, err.Error())
+			if u, marshalErr := json.Marshal(StartLog{CurrentTime: time.Now(), Errors: startLog.Errors, Redis: startLog.Redis, ListenPort: configuration.listenPort}); marshalErr == nil {
+				fmt.Println(string(u))
+			}
+			log.Fatalln("There's an error with the server", err)
+		}
+	case <-shutdownCtx.Done():
+		log.Println("shutdown signal received, draining in-flight requests")
+		// Bound the drain: a hung handler must not block termination forever.
+		drainCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
+		defer cancel()
+		if err := srv.Shutdown(drainCtx); err != nil {
+			log.Printf("main: graceful shutdown failed: %v", err)
+		}
+		if err := c.Close(); err != nil {
+			log.Printf("main: closing the Redis pool failed: %v", err)
+		}
+		log.Println("shutdown complete")
+	}
+}
+
+// invalidIPMessage explains *why* an address was rejected, distinguishing a
+// syntactically invalid address from a well-formed IPv6 one.
+func invalidIPMessage(ipAddress string) string {
+	if parsed := net.ParseIP(ipAddress); parsed != nil && parsed.To4() == nil {
+		return "IPv6 addresses are not supported by the configured blacklists"
+	}
+	return "invalid IP address format"
+}
+
+// clientIPFrom returns the address to attribute the request to.
+//
+// r.RemoteAddr is the proxy when the service runs behind nginx, but blindly
+// trusting X-Forwarded-For lets any client forge its own identity. The proxy
+// headers are therefore honoured only when the operator declares the deployment
+// is behind a trusted proxy.
+func clientIPFrom(r *http.Request) string {
+	if configuration.TrustProxyHeaders {
+		// X-Forwarded-For is a client-to-proxy chain: the first entry is the
+		// original client.
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			if first, _, found := strings.Cut(forwarded, ","); found {
+				return strings.TrimSpace(first)
+			}
+			return strings.TrimSpace(forwarded)
+		}
+		if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+			return strings.TrimSpace(realIP)
 		}
 	}
+	return r.RemoteAddr
+}
 
+// setCacheControl declares the response cacheable by the client. Call it only on
+// success paths: applied before validation it also marked 400 responses as
+// cacheable, so a client that once sent a malformed request kept getting the
+// error from its own cache for a whole hour.
+func setCacheControl(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
 }
 
 // Root handler for /
 func RootHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
-	clientIP := r.RemoteAddr
+	setCacheControl(w)
+	clientIP := clientIPFrom(r)
 
 	var endpointsList []string
 	endpointsList = append(endpointsList, "GET /ip/<ip>", "GET /domain/<domain>", "POST /ip/check", "POST /domain/check", "GET /health", "GET /clear-cache/<object-name>")
@@ -308,7 +385,7 @@ func HealthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 // Function to get IP information
 func GetIp(w http.ResponseWriter, r *http.Request) {
-	clientIP := r.RemoteAddr
+	clientIP := clientIPFrom(r)
 	start := time.Now()
 	var errors []string
 	// Errors from the DNS fan-out, kept apart from the response-wide list so a
@@ -321,7 +398,8 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		errors = append(errors, redisErrorMsg)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
+	// Cache-Control is set on the success path only, further down: declaring a 400
+	// cacheable makes the client keep replaying its own error for a whole hour.
 	params := mux.Vars(r)
 	ip.Cached = false
 	ip.Status = true
@@ -340,7 +418,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(ip)
 		logRequest("GET", http.StatusBadRequest, "/ip", ipAddress, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
-	} else if net.ParseIP(params["ip"]) != nil {
+	} else if isIPv4(ipAddress) {
 		ip.ValidIP = true
 
 		// Look for it in Redis cache. Skipped entirely when Redis is down.
@@ -368,6 +446,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		// If IP is not valid, set the variable to False
 		ip.ValidIP = false
 		ip.Status = false
+		errors = append(errors, invalidIPMessage(ipAddress))
 		elapsed := time.Since(start).Seconds()
 		ip = Ip{TimeTaken: elapsed, IP: params["ip"], ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
@@ -396,6 +475,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	setCacheControl(w)
 	json.NewEncoder(w).Encode(ip)
 
 	// Log
@@ -404,7 +484,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 
 // Function to get domain information
 func GetDomain(w http.ResponseWriter, r *http.Request) {
-	clientIP := r.RemoteAddr
+	clientIP := clientIPFrom(r)
 	start := time.Now()
 	var errors []string
 	// Errors from the DNS fan-out, kept apart from the response-wide list so a
@@ -418,7 +498,8 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
+	// Cache-Control is set on the success path only, further down: declaring a 400
+	// cacheable makes the client keep replaying its own error for a whole hour.
 	params := mux.Vars(r)
 	domain.Cached = false
 	domain.Status = true
@@ -492,6 +573,7 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 			errors = append(errors, string(err.Error()))
 		}
 	}
+	setCacheControl(w)
 	json.NewEncoder(w).Encode(domain)
 	// Log
 	logRequest("GET", http.StatusOK, "/domain", params["domain"], "", errors, elapsed, domain.Cached, clientIP, redisAvailable, redisConnections)
@@ -499,7 +581,7 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 
 // POST handler to check IP against custom blacklists
 func PostCheckIp(w http.ResponseWriter, r *http.Request) {
-	clientIP := r.RemoteAddr
+	clientIP := clientIPFrom(r)
 	start := time.Now()
 	var errors []string
 	var req CheckIpRequest
@@ -512,7 +594,8 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
+	// No Cache-Control on POST: the header is meaningless for a non-idempotent
+	// request and it also marked validation errors as cacheable.
 
 	ip.Cached = false
 	ip.Status = true
@@ -547,7 +630,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -560,20 +643,21 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
-	// Validate IP
-	if net.ParseIP(req.IP) == nil {
+	// Validate IP. IPv6 is rejected explicitly: the DNSBL zones are IPv4-only and
+	// an IPv6 address cannot be reversed into a valid query name.
+	if !isIPv4(req.IP) {
 		ip.ValidIP = false
 		ip.Status = false
-		errors = append(errors, "invalid IP address format")
+		errors = append(errors, invalidIPMessage(req.IP))
 		elapsed := time.Since(start).Seconds()
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 	ip.ValidIP = true
@@ -587,7 +671,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: true, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -600,7 +684,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		ip = Ip{TimeTaken: elapsed, IP: req.IP, ValidIP: true, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -678,7 +762,7 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 
 // POST handler to check domains against custom blacklists
 func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
-	clientIP := r.RemoteAddr
+	clientIP := clientIPFrom(r)
 	start := time.Now()
 	var errors []string
 	var req CheckDomainRequest
@@ -691,7 +775,8 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "max-age="+strconv.Itoa(configuration.CacheControlMaxAge))
+	// No Cache-Control on POST: the header is meaningless for a non-idempotent
+	// request and it also marked validation errors as cacheable.
 
 	domain.Cached = false
 	domain.Status = true
@@ -726,7 +811,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -739,7 +824,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -752,7 +837,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 	domain.ValidDomain = true
@@ -766,7 +851,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: true, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -779,7 +864,7 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: true, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, requestBody, errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("POST", http.StatusBadRequest, "/domain/check", req.Domain, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
@@ -855,18 +940,29 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	logRequest("POST", http.StatusOK, "/domain/check", req.Domain, requestBody, domain.Errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }
 
+// truncateForLog caps the request body copied into a log entry.
+func truncateForLog(body string) string {
+	if len(body) <= maxLoggedBodyBytes {
+		return body
+	}
+	return body[:maxLoggedBodyBytes] + "...[truncated]"
+}
+
 // Helper function for logging (DRY)
 func logRequest(httpMethod string, httpStatusCode int, method string, param string, requestBody string, errors []string, elapsed float64, cached bool, clientIP string, redisAvailable bool, redisConnections int) {
 	var memAlloc uint64
 	var numGC uint32
 	memAlloc, numGC = MemUsage()
-	u, err := json.MarshalIndent(Log{
+	// json.Marshal, not MarshalIndent: log collectors (Loki, Fluent Bit, CloudWatch)
+	// parse newline-delimited JSON, and the indented form split every entry into
+	// a dozen unrelated lines.
+	u, err := json.Marshal(Log{
 		CurrentTime:      time.Now(),
 		HTTPMethod:       httpMethod,
 		HTTPStatusCode:   httpStatusCode,
 		Method:           method,
 		Param:            param,
-		RequestBody:      requestBody,
+		RequestBody:      truncateForLog(requestBody),
 		Errors:           errors,
 		MemoryAlloc:      memAlloc,
 		NumGC:            numGC,
@@ -875,7 +971,7 @@ func logRequest(httpMethod string, httpStatusCode int, method string, param stri
 		ClientIP:         clientIP,
 		Redis:            redisAvailable,
 		RedisConnections: redisConnections,
-	}, "", "   ")
+	})
 
 	// Do not panic on log marshal failure: a logging error must never crash the server.
 	if err != nil {
@@ -885,10 +981,26 @@ func logRequest(httpMethod string, httpStatusCode int, method string, param stri
 	fmt.Println(string(u))
 }
 
+// isOwnCacheKey reports whether a key is one this service could have written.
+//
+// The endpoint is unauthenticated and deletes by exact key, so without this check
+// any client could delete arbitrary entries from a Redis database that may be
+// shared with other applications. GET-endpoint keys are the bare IP or domain;
+// POST-endpoint keys carry the prefix built by buildPostCacheKey.
+func isOwnCacheKey(key string) bool {
+	if strings.HasPrefix(key, "post:ip:") || strings.HasPrefix(key, "post:domain:") {
+		return true
+	}
+	if len(key) > configuration.MaxStringLength {
+		return false
+	}
+	return isIPv4(key) || validator.IsValidDomain(key)
+}
+
 // Clear cache
 func DelCache(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	clientIP := r.RemoteAddr
+	clientIP := clientIPFrom(r)
 	start := time.Now()
 	var errors []string
 	var clearCache ClearCache
@@ -899,18 +1011,45 @@ func DelCache(w http.ResponseWriter, r *http.Request) {
 	}
 	params := mux.Vars(r)
 	key := params["key"]
-	err := delRedisKey(key)
-	if err != nil {
-		errors = append(errors, string(err.Error()))
+
+	// Reject anything this service could not have written, before touching Redis.
+	if !isOwnCacheKey(key) {
+		errors = append(errors, "invalid cache key: must be an IPv4 address, a domain name, or a post:ip:/post:domain: key")
+		elapsed := time.Since(start).Seconds()
+		clearCache = ClearCache{TimeTaken: elapsed, Key: key, Errors: errors, Status: false}
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(clearCache)
+		logRequest("DELETE", http.StatusBadRequest, "/clear-cache", key, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	// Skip the delete entirely when Redis is down, like every other handler, and
+	// report it instead of failing inside delRedisKey.
+	if !redisAvailable {
+		elapsed := time.Since(start).Seconds()
+		clearCache = ClearCache{TimeTaken: elapsed, Key: key, Errors: errors, Status: false}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(clearCache)
+		logRequest("DELETE", http.StatusServiceUnavailable, "/clear-cache", key, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		return
+	}
+
+	statusCode := http.StatusOK
+	if err := delRedisKey(key); err != nil {
+		errors = append(errors, err.Error())
 		clearCache.Status = false
+		// The response used to be 200 even on failure, so a client had no way to
+		// detect that nothing was deleted.
+		statusCode = http.StatusInternalServerError
 	} else {
 		clearCache.Status = true
 	}
 	elapsed := time.Since(start).Seconds()
 	clearCache = ClearCache{TimeTaken: elapsed, Key: key, Errors: errors, Status: clearCache.Status}
 
+	w.WriteHeader(statusCode)
 	json.NewEncoder(w).Encode(clearCache)
 
 	// Log
-	logRequest("GET", http.StatusOK, "/clear-cache", key, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+	logRequest("DELETE", statusCode, "/clear-cache", key, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 }

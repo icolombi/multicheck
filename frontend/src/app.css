@@ -1,5 +1,5 @@
 /* Tailwind v4: single import replaces @tailwind base/components/utilities */
-@import "tailwindcss";
+@import 'tailwindcss';
 
 /* Dark mode via .dark class (replaces darkMode: 'class' in tailwind.config.js) */
 @variant dark (&:where(.dark, .dark *));
@@ -11,6 +11,13 @@
 	--color-ring: hsl(var(--ring));
 	--color-background: hsl(var(--background));
 	--color-foreground: hsl(var(--foreground));
+	/* card/popover were defined as raw CSS variables below but never mapped here.
+	   In Tailwind v4 utilities are generated from @theme, so bg-card produced no
+	   CSS at all and every card rendered transparent. */
+	--color-card: hsl(var(--card));
+	--color-card-foreground: hsl(var(--card-foreground));
+	--color-popover: hsl(var(--popover));
+	--color-popover-foreground: hsl(var(--popover-foreground));
 	--color-primary: hsl(var(--primary));
 	--color-primary-foreground: hsl(var(--primary-foreground));
 	--color-secondary: hsl(var(--secondary));

@@ -35,23 +35,24 @@
 	});
 
 	function validateInput(): boolean {
-		try {
-			if (checkType === 'ip') {
-				ipSchema.parse(inputValue);
-			} else {
-				domainSchema.parse(inputValue);
-			}
+		// safeParse instead of parse + try/catch: it keeps the result typed, avoids
+		// the deprecated `.errors` alias (`.issues` in Zod 4) and cannot blow up on a
+		// non-Zod throw.
+		const schema = checkType === 'ip' ? ipSchema : domainSchema;
+		const parsed = schema.safeParse(inputValue);
+
+		if (parsed.success) {
 			validationError = null;
 			return true;
-		} catch (error: any) {
-			validationError = error.errors[0]?.message || 'Invalid input';
-			return false;
 		}
+
+		validationError = parsed.error.issues[0]?.message ?? 'Invalid input';
+		return false;
 	}
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
-		
+
 		if (!validateInput()) {
 			toast.error(validationError || 'Invalid input');
 			return;
@@ -101,6 +102,7 @@
 
 			// Add to history
 			const historyItem: HistoryItem = {
+				id: crypto.randomUUID(),
 				type: checkType,
 				value: inputValue,
 				timestamp: Date.now(),
