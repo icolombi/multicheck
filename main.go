@@ -167,7 +167,7 @@ var nameservers []string
 var startTime = time.Now()
 
 // version can be set during build with -ldflags "-X main.version=x.y.z"
-var version = "1.6.0"
+var version = "1.6.1"
 
 // How long in-flight requests are given to finish after a termination signal.
 // Sized above the DNS fan-out timeout so a running check is not cut short.

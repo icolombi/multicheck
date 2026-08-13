@@ -372,7 +372,7 @@ Checks the service status, Redis connectivity, and uptime.
   "RedisConnections": 1,
   "CachedItems": 42,
   "Uptime": 3600000000000,
-  "GoVersion": "go1.26.1",
+  "GoVersion": "go1.26.6",
   "Version": "1.6.0",
   "MemoryAlloc": 2048
 }
