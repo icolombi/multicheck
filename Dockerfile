@@ -2,6 +2,12 @@ FROM golang:1.26 AS builder
 
 WORKDIR /app
 
+# The base image pins the toolchain to its own patch release and sets
+# GOTOOLCHAIN=local, so a go.mod requiring a newer patch than the image
+# ships would fail go mod download until the image catches up. auto lets
+# go fetch the exact toolchain go.mod declares instead of waiting on that.
+ENV GOTOOLCHAIN=auto
+
 # Copia solo i file delle dipendenze prima per sfruttare la cache
 COPY go.mod go.sum ./
 RUN go mod download
