@@ -35,7 +35,7 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 
 **Backend:**
 
-- Go 1.26+
+- Go 1.27+
 - Redis server
 - Docker (optional)
 
@@ -372,8 +372,8 @@ Checks the service status, Redis connectivity, and uptime.
   "RedisConnections": 1,
   "CachedItems": 42,
   "Uptime": 3600000000000,
-  "GoVersion": "go1.26.6",
-  "Version": "1.6.0",
+  "GoVersion": "go1.27.1",
+  "Version": "1.6.2",
   "MemoryAlloc": 2048
 }
 ```

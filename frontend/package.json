@@ -39,5 +39,8 @@
     "lucide-svelte": "^0.468.0",
     "svelte-sonner": "^0.3.28",
     "zod": "^4.0.0"
+  },
+  "overrides": {
+    "cookie": "^0.7.2"
   }
 }
