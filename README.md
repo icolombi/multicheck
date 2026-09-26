@@ -41,7 +41,7 @@ Multicheck is a high-performance REST API service written in Go to check the rep
 
 **Frontend (optional):**
 
-- Node.js 22+
+- Node.js 24 LTS (the version used by CI and the Docker images)
 - npm
 
 ### Installation and Startup

@@ -18,7 +18,9 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${VERSION}" -o ./bin/multicheck && \
     strip ./bin/multicheck
 
-FROM alpine:latest
+# Pinned to a supported Alpine release (EOL 2028-06) instead of latest, so a rebuild
+# never jumps to a new release unannounced. Bump it together with dependency audits.
+FROM alpine:3.24
 
 WORKDIR /app
 

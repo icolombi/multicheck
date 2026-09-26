@@ -25,7 +25,7 @@ Modern, responsive frontend for the Multicheck DNSBL Reputation API built with S
 
 ## Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 24 LTS (the version used by CI and the Docker images) and npm
 - Multicheck API running on `http://localhost:8080`
 
 ## Installation

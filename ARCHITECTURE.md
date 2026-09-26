@@ -814,13 +814,13 @@ Invalid IP  → Status: false → Immediate response
 
 ```dockerfile
 # Stage 1: Builder
-FROM golang:alpine AS builder
+FROM golang:1.27 AS builder
 WORKDIR /app
 COPY . .
 RUN go build -o multicheck
 
 # Stage 2: Runtime
-FROM alpine:latest
+FROM alpine:3.24
 COPY --from=builder /app/multicheck .
 CMD ["./multicheck"]
 ```
