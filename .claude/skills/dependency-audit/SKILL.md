@@ -92,9 +92,14 @@ Run the checks that apply; run independent ones in parallel.
 - `npm outdated --json` — `current` vs `wanted` (inside the semver range) vs
   `latest` (may be a major).
 - `npm audit --json` for advisories.
-- For **every** direct dependency: `npm view <pkg> deprecated`. A non-empty
-  answer is a finding even if the version is current (it usually names the
-  replacement package).
+- For **every** direct dependency: `npm view <pkg>@<installed-version> deprecated`
+  (installed version from `package-lock.json`, **not** the bare package name:
+  that only inspects `latest` and misses a whole major line that has gone
+  unsupported, e.g. `eslint@9.x` after ESLint 10). A non-empty answer is a
+  finding even if the version is current (it usually names the replacement
+  package or the supported line). Also collect the `npm warn deprecated` lines
+  printed by `npm ci`, which cover transitive packages too. A deprecated
+  *major line* raises the priority of the matching major upgrade.
 - `overrides`: for each entry run `npm ls <pkg>` and check whether the
   dependency tree already resolves to a safe version without it; an override
   that no longer does anything should be proposed for removal.
