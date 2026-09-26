@@ -45,6 +45,12 @@ endoflife.date entry, fall back to the upstream release policy and say so.
 2. Note today's date (from the session context) — EOL judgements depend on it.
 3. Work from the repository root with absolute paths; the shell may be inside
    `frontend/`.
+4. Read `deferred.md` (next to this file): upgrades a previous run found but the
+   user postponed. Treat every entry as a snapshot, re-verify it against current
+   data in Phases 2-3, fold the ones still valid into the Phase 4 report (flag
+   any that became more urgent, e.g. a line that went EOL), and drop entries
+   that are done or obsolete. At the end of a run that postpones anything, update
+   `deferred.md` with the new snapshot date.
 
 ## Phase 1 — Inventory
 
