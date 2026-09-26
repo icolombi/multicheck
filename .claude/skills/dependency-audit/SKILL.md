@@ -135,6 +135,18 @@ release notes for security fixes):
    changed, mechanical fix), **high** (behaviour change, rewrite, or peer chain
    forcing several majors at once).
 
+6. **Dry-run every npm major/minor in a throwaway copy**, never in the repo:
+   `rsync -a --exclude node_modules --exclude build --exclude .svelte-kit frontend/ <scratchpad>/trial-<name>/`,
+   apply one family per copy (so a failure is attributable), then run
+   `npm install <pkg>@<range>`, `npm run check`, `npm run lint`, `npm run build`
+   there, and run the copies in parallel. Report the observed result (e.g. "2 new
+   lint errors at api.ts:36") instead of guessing from the changelog. A trial
+   does not exercise runtime behaviour (dev server, toasts, styling): say so.
+   If `npm install` fails with ERESOLVE while the peers are compatible, the
+   locked tree is holding a stale peer edge (seen with Vite 8 + plugin-svelte 7,
+   via `vite-plugin-svelte-inspector`); retry without `package-lock.json` and
+   report that the real upgrade needs a regenerated lockfile.
+
 Where two candidates exist (e.g. a major that needs a Node bump), recommend the
 smaller safe step and list the bigger one as optional.
 
@@ -158,8 +170,9 @@ Then ask for confirmation with `AskUserQuestion` (multi-select, one option per
 group or per risky item, with the recommended ones first). Also ask, in the
 same question set, whether to bump `version`: CLAUDE.md says to bump it only
 for public API / response / config changes, yet recent dependency commits bumped
-the patch anyway, so do not decide silently. Stop here if the user declines
-everything.
+the patch anyway, so do not decide silently. Treat a question the user left
+unanswered as declined (apply nothing from it) and say so. Stop here if the user
+declines everything.
 
 ## Phase 5 — Apply (only what was approved)
 
@@ -174,6 +187,11 @@ failure is attributable.
   so `package-lock.json` is regenerated; use `npm ci` afterwards to prove the
   lockfile is reproducible. Do **not** run `npm run format` (or prettier) on
   `package.json` / `package-lock.json`: they are in `.prettierignore` on purpose.
+- **`CLAUDE.md` is a symlink to `AGENTS.md`.** `sed -i` and most editors replace
+  a symlink with a regular file (git then shows `T CLAUDE.md`). Edit `AGENTS.md`
+  only, or use `sed -i --follow-symlinks`, and run `git status --short` after
+  every scripted edit: a `T` entry means a symlink was broken
+  (`git restore <file>` fixes it).
 - Images/actions: edit the tag in every file listed by the consistency check,
   never only one of them. Pin Alpine to a minor (`alpine:3.NN`) instead of
   `latest`.
@@ -182,7 +200,8 @@ failure is attributable.
   and under `packages[""]`).
 
 **Verification (mirror CI, `docker-publish.yml`)**
-- Backend: `gofmt -l .` (must print nothing), `go vet ./...`,
+- Backend (a local `frontend/node_modules` can add stray Go packages to `./...`
+  output; CI has none, so ignore those): `gofmt -l .` (must print nothing), `go vet ./...`,
   `go vet -tags integration ./...`, `make test-race`, `make build`.
 - Frontend (from `frontend/`): `npm ci`, `npm run check`, `npm run lint`,
   `npm run build`.
@@ -198,8 +217,9 @@ the error output, and continue with the remaining groups only if they are
 independent.
 
 **Docs**: after updating, fix every doc found in Phase 1 (README prerequisites,
-ARCHITECTURE.md image tags, CLAUDE.md and AGENTS.md — keep the last two in
-sync, per CLAUDE.md). Add a CHANGELOG file only if the repo's convention calls
+ARCHITECTURE.md image tags, and the version line in `AGENTS.md`, which
+`CLAUDE.md` mirrors through the symlink). A bumped `version` also appears in the
+README sample `/health` response. Add a CHANGELOG file only if the repo's convention calls
 for one for this kind of change.
 
 ## Phase 6 — Wrap up
