@@ -33,9 +33,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 		});
 	} catch (error) {
 		if (error instanceof DOMException && error.name === 'TimeoutError') {
-			throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+			throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`, { cause: error });
 		}
-		throw new Error('Cannot reach the API. Is the backend running?');
+		throw new Error('Cannot reach the API. Is the backend running?', { cause: error });
 	}
 
 	const body = await parseJson(response);

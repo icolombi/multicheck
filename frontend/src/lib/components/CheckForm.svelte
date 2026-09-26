@@ -232,8 +232,7 @@
 								placeholder="zen.spamhaus.org&#10;bl.spamcop.net"
 								rows="4"
 								class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-								disabled={loading}
-							></textarea>
+								disabled={loading}></textarea>
 						</div>
 
 						<div>
@@ -246,8 +245,7 @@
 								placeholder="8.8.8.8&#10;1.1.1.1"
 								rows="3"
 								class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-								disabled={loading}
-							></textarea>
+								disabled={loading}></textarea>
 						</div>
 					</div>
 				{/if}

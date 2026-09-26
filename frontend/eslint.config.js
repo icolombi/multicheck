@@ -5,7 +5,7 @@ import prettier from 'eslint-config-prettier/flat';
 import globals from 'globals';
 import svelteConfig from './svelte.config.js';
 
-// ESLint 9 flat config. The order of the entries matters: the two prettier
+// ESLint 10 flat config. The order of the entries matters: the two prettier
 // entries come last so they switch off the stylistic rules that would otherwise
 // fight with `npm run format`.
 export default ts.config(

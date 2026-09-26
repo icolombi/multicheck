@@ -120,7 +120,7 @@ npm run format
 npm run lint
 ```
 
-ESLint uses the flat config in `eslint.config.js` (ESLint 9). The `eslint-config-prettier`
+ESLint uses the flat config in `eslint.config.js` (ESLint 10). The `eslint-config-prettier`
 entries are last on purpose: they disable the stylistic rules that would otherwise
 conflict with `npm run format`. `package.json` and `package-lock.json` are listed in
 `.prettierignore` — npm owns their formatting, and letting Prettier convert them to

@@ -427,7 +427,7 @@ npm run format           # Format code with Prettier
 npm run lint             # Prettier check + ESLint
 ```
 
-`eslint.config.js` is an ESLint 9 flat config. The two prettier entries must stay
+`eslint.config.js` is an ESLint 10 flat config. The two prettier entries must stay
 last: they switch off the stylistic rules that would otherwise contradict
 `npm run format`. `package.json` and `package-lock.json` are in `.prettierignore`
 because npm owns their formatting — without that, every `npm run format` rewrote
