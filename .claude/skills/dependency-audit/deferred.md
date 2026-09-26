@@ -5,22 +5,24 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-09-26 (project at v1.6.3). All npm trials were run in
+Snapshot date: 2026-09-26 (project at v1.6.4). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
 ## Major upgrades (frontend)
 
-| Priority | Upgrade | Trial result | What applying it takes |
-|----------|---------|--------------|------------------------|
-| **High** | `eslint` 9.39.5 → 10.x, `@eslint/js` 9 → 10, `globals` 15 → 17 | check/build green, lint red: 2 new `preserve-caught-error` errors | ESLint 9 is **no longer supported** (`npm warn deprecated` in CI). Attach `{ cause: error }` to the two `throw new Error(...)` in the `catch` block of `frontend/src/lib/api.ts` (~lines 36 and 38). `typescript-eslint` 8.70+ and `eslint-plugin-svelte` 3.23+ already accept ESLint 10. Needs Node ^20.19 / ^22.13 / >=24 |
-| Medium | `vite` 7 → 8 together with `@sveltejs/vite-plugin-svelte` 6 → 7 | check/lint/build green **only with a regenerated lockfile** | `npm install` fails with ERESOLVE against the current lockfile (stale peer edge via `vite-plugin-svelte-inspector`); delete `package-lock.json` and reinstall, then review the lockfile diff. Vite 8 is Rolldown-based: try `npm run dev` and `npm run preview`, not only the build. Must move as a pair; `@sveltejs/kit` and `@tailwindcss/vite` already accept Vite 8 |
-| Low | `prettier-plugin-svelte` 3 → 4 | check/build green, lint red until reformatted | Run prettier on `frontend/src/lib/components/CheckForm.svelte` (it moves the closing `</textarea>` of two textareas, ~lines 235 and 249). Needs Node >= 20 |
-| Low | `svelte-sonner` 0.3.28 → 1.x | check/lint/build green | Toasts (`Toaster` in `+layout.svelte`, `toast` in `CheckForm`/`ResultsCard`) must be checked visually, including dark mode |
-| Low | `typescript` 5.9 → 6.0.x (`~6.0.3`) | check/lint/build green | Do **not** go to 7: `@sveltejs/kit` peers stop at TypeScript 6 and `typescript-eslint` requires `<6.1.0`. Re-check both peer ranges before moving |
+None pending. The 2026-09-26 majors (ESLint 10 stack, Vite 8 + plugin-svelte 7,
+prettier-plugin-svelte 4, svelte-sonner 1, TypeScript 6.0) were applied in the
+v1.6.4 round.
 
-Suggested order: ESLint 10 first (unsupported line), then the Vite pair, then
-the low-risk ones in one go.
+Still open from that round:
+
+- **`svelte-sonner` 1.x toasts were not checked visually** (type-check, build
+  and a `vite dev` smoke test only). Look at a success and an error toast, in
+  light and dark mode.
+- **TypeScript is held at `~6.0.3` on purpose**: TypeScript 7 is excluded while
+  `@sveltejs/kit` peers stop at 6 and `typescript-eslint` requires `<6.1.0`.
+  Re-check both peer ranges before moving (`~6.0` -> `^6` or 7).
 
 ## Revisit on a date
 

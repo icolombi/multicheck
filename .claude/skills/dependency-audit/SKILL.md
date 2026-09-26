@@ -196,7 +196,11 @@ failure is attributable.
   `golang:<minor>` tag in `Dockerfile` if the minor changed.
 - npm: edit `frontend/package.json` ranges, then `npm install` from `frontend/`
   so `package-lock.json` is regenerated; use `npm ci` afterwards to prove the
-  lockfile is reproducible. Do **not** run `npm run format` (or prettier) on
+  lockfile is reproducible. When ERESOLVE forces a fresh lockfile (Vite majors):
+  `npm pkg set 'devDependencies.<pkg>=^x.y.z'`, `rm -rf package-lock.json node_modules`,
+  `npm install`, then diff the old and new `packages` maps to prove the churn is
+  limited to the intended chain (Vite 7 → 8 swapped esbuild/rollup for rolldown
+  and changed nothing unrelated). Do **not** run `npm run format` (or prettier) on
   `package.json` / `package-lock.json`: they are in `.prettierignore` on purpose.
 - **`CLAUDE.md` is a symlink to `AGENTS.md`.** `sed -i` and most editors replace
   a symlink with a regular file (git then shows `T CLAUDE.md`). Edit `AGENTS.md`
@@ -216,6 +220,11 @@ failure is attributable.
   `go vet -tags integration ./...`, `make test-race`, `make build`.
 - Frontend (from `frontend/`): `npm ci`, `npm run check`, `npm run lint`,
   `npm run build`.
+- Vite/build-tool majors: also smoke-test `vite dev` (start it in the background
+  on a spare port with `--strictPort`, poll with curl until `/`, `/health` and a
+  `.svelte` module answer 200, then `kill` its PID; never `pkill -f`, it matches
+  the calling shell's own command line and kills it) and `docker build` the
+  frontend image, which installs the musl native binaries the lockfile must list.
 - Docker changes: `docker build` the touched Dockerfile if Docker is available;
   otherwise say plainly that the image build was **not** verified.
 - Integration tests need Redis and live DNS, so CI skips them; run
