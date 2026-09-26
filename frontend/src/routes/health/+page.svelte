@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { Activity, Database, Clock, Cpu, Package } from 'lucide-svelte';
+	import { Activity, Database, Clock, Cpu, Package } from '@lucide/svelte';
 	import type { HealthResponse } from '$lib/types';
 	import { getHealth } from '$lib/api';
 

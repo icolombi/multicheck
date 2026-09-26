@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { History, Trash2, Globe, Network } from 'lucide-svelte';
+	import { History, Trash2, Globe, Network } from '@lucide/svelte';
 	import type { HistoryItem } from '$lib/types';
 
 	interface Props {

@@ -7,7 +7,7 @@
 		Database,
 		Copy,
 		Trash2
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
 	import type { IpResponse, DomainResponse, CheckType } from '$lib/types';
 	import { clearCache } from '$lib/api';

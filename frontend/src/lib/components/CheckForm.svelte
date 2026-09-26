@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { Search, Settings, X, Loader2, AlertCircle } from 'lucide-svelte';
+	import { Search, Settings, X, Loader2, AlertCircle } from '@lucide/svelte';
 	import ResultsCard from './ResultsCard.svelte';
 	import type { CheckType, HistoryItem, IpResponse, DomainResponse } from '$lib/types';
 	import { checkIp, checkDomain, postCheckIp, postCheckDomain } from '$lib/api';
