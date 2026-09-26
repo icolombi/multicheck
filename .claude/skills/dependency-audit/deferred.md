@@ -17,9 +17,6 @@ v1.6.4 round.
 
 Still open from that round:
 
-- **`svelte-sonner` 1.x toasts were not checked visually** (type-check, build
-  and a `vite dev` smoke test only). Look at a success and an error toast, in
-  light and dark mode.
 - **TypeScript is held at `~6.0.3` on purpose**: TypeScript 7 is excluded while
   `@sveltejs/kit` peers stop at 6 and `typescript-eslint` requires `<6.1.0`.
   Re-check both peer ranges before moving (`~6.0` -> `^6` or 7).
