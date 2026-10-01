@@ -53,7 +53,7 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 ### Version Information
 
 - Version is stored in `main.go` as package-level variable `version`
-- Default value: `"1.6.4"` (change this for releases)
+- Default value: `"1.6.5"` (change this for releases)
 - Can be overridden at build time: `go build -ldflags "-X main.version=x.y.z"`
 - Displayed in `/health` endpoint response
 
