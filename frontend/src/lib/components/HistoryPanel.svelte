@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { History, Trash2, Globe, Network } from '@lucide/svelte';
-	import type { HistoryItem } from '$lib/types';
+	import type { HistoryItem } from '#lib/types.ts';
 
 	interface Props {
 		items: HistoryItem[];

@@ -2,9 +2,9 @@
 	import { toast } from 'svelte-sonner';
 	import { Search, Settings, X, Loader2, AlertCircle } from '@lucide/svelte';
 	import ResultsCard from './ResultsCard.svelte';
-	import type { CheckType, HistoryItem, IpResponse, DomainResponse } from '$lib/types';
-	import { checkIp, checkDomain, postCheckIp, postCheckDomain } from '$lib/api';
-	import { ipSchema, domainSchema } from '$lib/validators';
+	import type { CheckType, HistoryItem, IpResponse, DomainResponse } from '#lib/types.ts';
+	import { checkIp, checkDomain, postCheckIp, postCheckDomain } from '#lib/api.ts';
+	import { ipSchema, domainSchema } from '#lib/validators.ts';
 
 	interface Props {
 		selectedItem: HistoryItem | null;

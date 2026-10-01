@@ -372,8 +372,8 @@ The `frontend/` directory contains a SvelteKit 5 application with the following 
   - `+page.svelte` - Home page with CheckForm and HistoryPanel
   - `health/+page.svelte` - Health dashboard with auto-refresh (5s interval)
 - **Configuration files:**
-  - `vite.config.ts` - Vite dev server with API proxy (`/api/*` → `http://localhost:8080`) and `@tailwindcss/vite` plugin
-  - `svelte.config.js` - SvelteKit adapter configuration
+  - `vite.config.ts` - Vite dev server with API proxy (`/api/*` → `http://localhost:8080`) and `@tailwindcss/vite` plugin. It also carries the SvelteKit config (adapter, preprocess): SvelteKit 3 no longer reads `svelte.config.js`
+  - `package.json` `imports` defines the `#lib/*` alias (replaces `$lib`); TypeScript imports need an explicit extension (`#lib/api.ts`). `tsconfig.json` extends `$app/tsconfig` and must keep its own `include`/`exclude`
 
 ### Frontend Tech Stack
 

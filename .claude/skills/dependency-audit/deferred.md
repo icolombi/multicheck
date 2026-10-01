@@ -11,28 +11,13 @@ server and runtime behaviour were not exercised.
 
 ## Major upgrades (frontend)
 
-- **SvelteKit 3 family** (`@sveltejs/kit` 2.70.3 -> 3.0.0, `adapter-static`
-  3.0.10 -> 4.0.0, `adapter-auto` 7.0.1 -> 8.0.0). Postponed by the user on
-  2026-10-01. Peers are already satisfied (Vite `^8.0.12`, Svelte `^5.57.1`,
-  plugin-svelte `^7`, TypeScript `^6`, Node `>=22.17`). The trial passed
-  `check`, `lint` and `build` with 0 errors after these forced changes:
-  1. Delete `svelte.config.js`; pass `preprocess` and `adapter` (no `kit`
-     namespace) to `sveltekit({...})` in `vite.config.ts`.
-  2. Drop the `svelteConfig` import/option from `eslint.config.js` (it imports
-     the deleted file).
-  3. `tsconfig.json` must extend `"$app/tsconfig"` instead of
-     `./.svelte-kit/tsconfig.json`.
-  4. `$lib` is removed (5 `.svelte` files use it). Preferred fix: add
-     `"imports": {"#lib": "./src/lib", "#lib/*": "./src/lib/*"}` to
-     `package.json` and import `#lib/<file>.ts` (explicit extension for TS;
-     `.svelte` keeps its own). Fallback: `alias: { $lib: 'src/lib' }`, which
-     works but is deprecated and warns on every run.
-  5. Remove the `cookie: ^0.7.2` override: kit 3 depends on `cookie ^2.0.1`
-     and the override would force an incompatible major onto it. Without it
-     the tree resolved `cookie@2.0.1` and `npm audit` reported 0 findings.
-  6. Update the `svelte.config.js` line in `AGENTS.md` (Frontend Architecture).
-  Before applying, also smoke-test `vite dev` and `docker build` the frontend
-  image, which the trial did not cover.
+None pending. The SvelteKit 3 family (kit 3.0.0, adapter-static 4.0.0,
+adapter-auto 8.0.0) was applied on 2026-10-01 on branch `chore/sveltekit-3`:
+config moved into `vite.config.ts`, `$lib` -> `#lib` via a `package.json`
+`imports` map, `tsconfig.json` extends `$app/tsconfig` and needs its own
+`include`/`exclude` (the base no longer has them, so `svelte-check` otherwise
+scans `build/`), and the `cookie` override was removed. Verified with `check`,
+`lint`, `build`, `vite dev` smoke test and `docker build`.
 
 Still open from earlier rounds:
 

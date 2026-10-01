@@ -1,7 +1,7 @@
 <script lang="ts">
-	import CheckForm from '$lib/components/CheckForm.svelte';
-	import HistoryPanel from '$lib/components/HistoryPanel.svelte';
-	import type { HistoryItem } from '$lib/types';
+	import CheckForm from '#lib/components/CheckForm.svelte';
+	import HistoryPanel from '#lib/components/HistoryPanel.svelte';
+	import type { HistoryItem } from '#lib/types.ts';
 
 	let historyItems = $state<HistoryItem[]>([]);
 	let selectedItem = $state<HistoryItem | null>(null);

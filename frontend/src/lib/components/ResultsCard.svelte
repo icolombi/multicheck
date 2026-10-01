@@ -9,8 +9,8 @@
 		Trash2
 	} from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
-	import type { IpResponse, DomainResponse, CheckType } from '$lib/types';
-	import { clearCache } from '$lib/api';
+	import type { IpResponse, DomainResponse, CheckType } from '#lib/types.ts';
+	import { clearCache } from '#lib/api.ts';
 
 	interface Props {
 		result: IpResponse | DomainResponse;

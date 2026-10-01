@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Activity, Database, Clock, Cpu, Package } from '@lucide/svelte';
-	import type { HealthResponse } from '$lib/types';
-	import { getHealth } from '$lib/api';
+	import type { HealthResponse } from '#lib/types.ts';
+	import { getHealth } from '#lib/api.ts';
 
 	let health = $state<HealthResponse | null>(null);
 	let loading = $state(true);

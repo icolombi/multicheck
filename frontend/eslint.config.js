@@ -3,7 +3,6 @@ import ts from 'typescript-eslint';
 import svelte from 'eslint-plugin-svelte';
 import prettier from 'eslint-config-prettier/flat';
 import globals from 'globals';
-import svelteConfig from './svelte.config.js';
 
 // ESLint 10 flat config. The order of the entries matters: the two prettier
 // entries come last so they switch off the stylistic rules that would otherwise
@@ -19,7 +18,7 @@ export default ts.config(
 		languageOptions: {
 			globals: {
 				...globals.browser,
-				// vite.config.ts and svelte.config.js run in Node.
+				// vite.config.ts runs in Node.
 				...globals.node
 			}
 		}
@@ -30,9 +29,8 @@ export default ts.config(
 		languageOptions: {
 			parserOptions: {
 				// Lets the Svelte parser hand <script lang="ts"> blocks to the
-				// TypeScript parser, and resolve $lib aliases through svelte.config.js.
-				parser: ts.parser,
-				svelteConfig
+				// TypeScript parser.
+				parser: ts.parser
 			}
 		}
 	},
