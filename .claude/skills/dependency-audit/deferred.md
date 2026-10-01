@@ -51,9 +51,8 @@ Still open from earlier rounds:
 
 ## Not done in the last run
 
-- **`govulncheck` was skipped again** (declined 2026-10-01; it is not
-  installed), so the Go modules have never been scanned for known
-  vulnerabilities by this skill. Ask again next run.
+- **`govulncheck`** ran for the first time on 2026-10-01 (v1.7.0, DB updated
+  2026-09-28, Go 1.27.1): `No vulnerabilities found.` Keep running it each audit.
 - Indirect Go modules with newer versions (`testify`, `go-cmp`, `go-internal`,
   `golang.org/x/tools`) were left alone: they only appear in the viper test
   graph, not in the compiled binary.
