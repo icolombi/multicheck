@@ -5,7 +5,7 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-10-01 (project at v1.6.5). All npm trials were run in
+Snapshot date: 2026-10-16 (project at v1.6.7). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
@@ -36,10 +36,10 @@ Still open from earlier rounds:
 
 ## Not done in the last run
 
-- **`govulncheck`** ran for the first time on 2026-10-01 (v1.7.0, DB updated
-  2026-09-28, Go 1.27.1): `No vulnerabilities found.` Keep running it each audit.
+- **`govulncheck`** found 6 stdlib vulnerabilities on Go 1.27.1 on 2026-10-16;
+  fixed by Go 1.27.2 (now `No vulnerabilities found.`). Keep running it each audit.
 - Indirect Go modules with newer versions (`testify`, `go-cmp`, `go-internal`,
-  `golang.org/x/tools`) were left alone: they only appear in the viper test
+  `golang.org/x/tools`, `x/mod`, `x/sync`) were left alone: they only appear in the viper test
   graph, not in the compiled binary.
 - `github.com/gorilla/mux` (last release v1.8.1, 2023-10) and
   `github.com/dchest/validator` (single maintainer) are maintenance-risk
