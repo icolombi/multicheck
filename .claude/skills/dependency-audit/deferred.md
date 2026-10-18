@@ -5,7 +5,7 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-10-16 (project at v1.6.7). All npm trials were run in
+Snapshot date: 2026-10-18 (project at v1.6.7). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
@@ -33,6 +33,13 @@ Still open from earlier rounds:
   `docker-compose.yml` (frontend-dev) and the CI `node-version`; Node 24 itself
   stays supported until 2028-04, so there is no urgency. Kit 3 needs Node
   `>=22.17`, so either line works with it.
+
+## Optional, postponed on 2026-10-18
+
+- **Valkey image tag** `valkey/valkey:9` in `docker-compose.yml` is a floating
+  major; pinning to `9.1` was declined for now (check the tag exists first).
+- **TypeScript 7.0.2** still blocked: `@sveltejs/kit` peers `^6`,
+  `typescript-eslint` 8.71.2 requires `<6.1.0`.
 
 ## Not done in the last run
 
