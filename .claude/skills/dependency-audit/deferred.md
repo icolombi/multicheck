@@ -5,7 +5,7 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-10-18 (project at v1.6.7). All npm trials were run in
+Snapshot date: 2026-10-18 (project at v1.6.8). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
