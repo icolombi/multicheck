@@ -1,0 +1,40 @@
+# Routine patch/minor updates are automated here; majors and cross-file
+# decisions (Go minor vs Dockerfile tag, Node LTS line) stay with the
+# dependency-audit skill. Majors are ignored on purpose for the same reason.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      # Peer-linked families must move together or npm fails with ERESOLVE.
+      svelte-kit:
+        patterns: ["svelte", "@sveltejs/*", "vite", "@tailwindcss/*", "tailwindcss"]
+      lint:
+        patterns: ["eslint", "@eslint/*", "typescript-eslint", "eslint-plugin-*", "prettier*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directories: ["/", "/frontend"]
+    schedule:
+      interval: weekly
+    ignore:
+      # Majors (e.g. the Node LTS line) are chosen by the skill, not by a bot.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
