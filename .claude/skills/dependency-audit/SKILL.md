@@ -1,7 +1,7 @@
 ---
 name: dependency-audit
-description: Audit every runtime, toolchain, base image, CI action and library used by Multicheck (Go, Node/Vite/SvelteKit, Alpine, nginx, Valkey, GitHub Actions) for obsolescence, end-of-life, deprecation and known vulnerabilities. Researches breaking changes, proposes a prioritised update plan, and applies it only after the user confirms. Use when asked to check for outdated software, update dependencies, or keep the project on supported/LTS versions.
-allowed-tools: Bash(go version), Bash(go list *), Bash(npm outdated *), Bash(npm view *), Bash(npm ls *), Bash(npm audit), Bash(npm audit --json), Bash(curl -s https://endoflife.date/api/*), Bash(curl -s https://hub.docker.com/v2/*)
+description: Audit dependencies, find outdated, end-of-life, deprecated or vulnerable software. Covers every runtime, toolchain, base image, CI action and library used by Multicheck (Go, Node/Vite/SvelteKit, Alpine, nginx, Valkey, GitHub Actions) for obsolescence, end-of-life, deprecation and known vulnerabilities. Researches breaking changes, proposes a prioritised update plan, and applies it only after the user confirms. Use when asked to check for outdated software, update dependencies, or keep the project on supported/LTS versions.
+allowed-tools: Bash(go version), Bash(go list *), Bash(go mod verify), Bash(command -v *), Bash(govulncheck *), Bash(git status *), Bash(git diff *), Bash(git ls-remote *), Bash(gh api repos/*), Bash(npm outdated *), Bash(npm view *), Bash(npm ls *), Bash(npm audit *), Bash(curl -s https://endoflife.date/api/*), Bash(curl -s https://hub.docker.com/v2/*)
 ---
 
 # Dependency audit
@@ -28,7 +28,8 @@ The project rule is: *stable and/or LTS versions only*. Apply it per component:
 | nginx (`nginx-unprivileged`) | **Stable** branch = even minor (1.30, 1.32, …), not mainline. | branch is EOL/superseded by a newer stable branch |
 | Valkey (`valkey/valkey`) | Newest supported major | major is EOL or a newer major exists |
 | Alpine | A pinned, supported release | image is unpinned (`alpine:latest`), or release is EOL |
-| GitHub Actions | Latest major tag | a newer major exists, or the action's runtime (e.g. node20) is deprecated |
+| Docker images (all) | Tag pinned to a minor; digest pin (`@sha256:`) is an optional hardening step | tag is floating (`latest`, bare major) |
+| GitHub Actions | Latest major tag; third-party actions (not `actions/*`, `docker/*`) preferably pinned to a commit SHA | a newer major exists, the action's runtime (`runs.using` in its `action.yml`) is deprecated, or a third-party action floats on a mutable tag |
 | Go modules / npm packages | Latest stable release compatible with the toolchain above | newer version exists, package is **deprecated** or **retracted**, or known vulnerability |
 
 Use https://endoflife.date/api/<product>.json for dates. Slugs: `go`, `nodejs`,
@@ -43,9 +44,14 @@ endoflife.date entry, fall back to the upstream release policy and say so.
    rollbacks in Phase 5 rely on `git restore`/`git diff` isolating this work.
    Proceed only if the user accepts, and never touch pre-existing changes.
 2. Note today's date (from the session context) — EOL judgements depend on it.
-3. Work from the repository root with absolute paths; the shell may be inside
+   Compare it with the `Snapshot date` in `deferred.md`: warn if the snapshot is
+   older than 30 days, and surface every "revisit on a date" entry whose date has
+   passed (e.g. a Node line that has since entered LTS).
+3. Recommend working on a dedicated branch (`chore/deps-<date>`) when on
+   `master`, so the whole run can be reverted with one command.
+4. Work from the repository root with absolute paths; the shell may be inside
    `frontend/`.
-4. Read `deferred.md` (next to this file): upgrades a previous run found but the
+5. Read `deferred.md` (next to this file): upgrades a previous run found but the
    user postponed. Treat every entry as a snapshot, re-verify it against current
    data in Phases 2-3, fold the ones still valid into the Phase 4 report (flag
    any that became more urgent, e.g. a line that went EOL), and drop entries
@@ -59,7 +65,7 @@ not reuse numbers from CLAUDE.md or from memory.
 
 | Where | What |
 |-------|------|
-| `go.mod` | `go` directive, direct and `// indirect` requirements |
+| `go.mod` | `go` and `toolchain` directives, direct and `// indirect` requirements |
 | `Dockerfile` | `FROM golang:…`, `FROM alpine:…`, `GOTOOLCHAIN` |
 | `frontend/Dockerfile` | `FROM node:…`, `FROM nginxinc/nginx-unprivileged:…` |
 | `docker-compose.yml` | `valkey/valkey:…`, `node:…` (frontend-dev) |
@@ -68,8 +74,8 @@ not reuse numbers from CLAUDE.md or from memory.
 | `frontend/package-lock.json` | resolved versions (what is really installed) |
 | local machine | `go version`, `node -v` (informational only) |
 
-Also check docs that quote versions and may already have drifted:
-`grep -nEi 'go 1\.|golang|node(\.js)? ?[0-9]|node:[0-9]|valkey ?[0-9]|nginx ?[0-9]|vite ?[0-9]' README.md ARCHITECTURE.md CLAUDE.md AGENTS.md frontend/README.md`
+Also check docs that quote versions and may already have drifted (`CLAUDE.md` is a symlink to `AGENTS.md`, so grep only one of them):
+`grep -nEi 'go 1\.|golang|node(\.js)? ?[0-9]|node:[0-9]|valkey ?[0-9]|nginx ?[0-9]|vite ?[0-9]' README.md ARCHITECTURE.md AGENTS.md frontend/README.md`
 
 ## Phase 2 — Audit (read-only)
 
@@ -88,16 +94,24 @@ Run the checks that apply; run independent ones in parallel.
 - `go list -m -u -json all` — read `Update`, `Deprecated`, `Retracted`, and
   `Indirect`. Report direct dependencies first; indirect ones are usually
   refreshed by `go get -u` of their parent.
-- `govulncheck ./...` if installed. If not, tell the user it is missing and
-  ask before running `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`
-  (it downloads and executes code).
+- `go mod verify` to confirm the module cache matches `go.sum`.
+- `command -v govulncheck`; if present run `govulncheck ./...`. It reports only
+  vulnerabilities reachable from the code, so a clean result does not rule out
+  advisories in modules that are merely imported: read `go list -m -u` output
+  too. If it is missing, tell the user and ask before installing it
+  (`go install golang.org/x/vuln/cmd/govulncheck@<version>` downloads and builds
+  code).
 - Judge maintenance risk of direct deps: last release date from the `Time`
   field, archived upstream, or a fork/replacement announced in the README.
 
 **npm packages** (from `frontend/`)
 - `npm outdated --json` — `current` vs `wanted` (inside the semver range) vs
   `latest` (may be a major).
-- `npm audit --json` for advisories.
+- `npm audit --json` for advisories, and `npm audit --omit=dev --json` to
+  separate what ships from build-time tooling. This frontend is built to static
+  files served by nginx, so a dev-only advisory is usually lower severity in
+  practice; say so explicitly instead of ranking it equal.
+- Check `package.json` and `package-lock.json` are in sync (`npm ci --dry-run`).
 - For **every** direct dependency: `npm view <pkg>@<installed-version> deprecated`
   (installed version from `package-lock.json`, **not** the bare package name:
   that only inspects `latest` and misses a whole major line that has gone
@@ -116,11 +130,34 @@ Run the checks that apply; run independent ones in parallel.
   `eslint-plugin-svelte`; Tailwind ↔ `@tailwindcss/vite`). These families must
   move together.
 
+**GitHub Actions** (`.github/workflows/*.yml`)
+- For each `uses: owner/action@ref`, find the newest release:
+  `gh api repos/<owner>/<action>/releases/latest --jq .tag_name` (fall back to
+  `git ls-remote --tags https://github.com/<owner>/<action>` if `gh` is not
+  authenticated).
+- Read the action's `action.yml` (`runs.using`) at the target tag: a deprecated
+  JavaScript runtime is a finding even when the major is current.
+- Report actions referenced by a mutable tag and, for third-party ones, offer
+  SHA pinning as an optional hardening group.
+
+**Image contents** — if `trivy` or `docker scout` is installed, scan the images
+the project builds for OS-package CVEs (Alpine, nginx), which none of the checks
+above can see. If neither is installed, say that this layer was not audited.
+
+**Automation** — check whether `.github/dependabot.yml` (or Renovate config)
+exists and covers `gomod`, `npm` (`/frontend`), `docker` (`/` and `/frontend`)
+and `github-actions`. If not, recommend it: routine patch/minor bumps should be
+automated so this skill is spent on majors and decisions.
+
+**Licences** — when a package is added or replaced, check its licence is
+compatible with the project's (see `LICENSE`).
+
 **Cross-file consistency** — the same runtime appears in several files and
 must stay aligned:
 - Node: `frontend/Dockerfile`, `docker-compose.yml` (frontend-dev) and the
   `node-version` in the CI workflow.
-- Go: `go.mod` `go` line vs the `golang:<minor>` image. When `go.mod` moves to a
+- Go: `go.mod` `go` line (and `toolchain` line, if any) vs the `golang:<minor>`
+  image, and the CI `go-version-file` really pointing at `go.mod`. When `go.mod` moves to a
   new minor, the image tag must move with it (the Dockerfile's
   `GOTOOLCHAIN=auto` only covers *patch* differences).
 - Docs: README/ARCHITECTURE/CLAUDE.md/AGENTS.md prerequisites (e.g. "Node.js
@@ -178,10 +215,12 @@ Present, in this order:
    replacement) so the user can decide.
 
 Then ask for confirmation with `AskUserQuestion` (multi-select, one option per
-group or per risky item, with the recommended ones first). Also ask, in the
-same question set, whether to bump `version`: CLAUDE.md says to bump it only
-for public API / response / config changes, yet recent dependency commits bumped
-the patch anyway, so do not decide silently. Treat a question the user left
+group or per risky item, with the recommended ones first). Version bump:
+CLAUDE.md says to bump `version` only for public API / response / config
+changes, so the default is **no bump**. Ask only when a change plausibly touches
+that surface (e.g. a higher minimum Node or Go version for users, a new required
+configuration). Past dependency commits bumped the patch anyway; mention it as
+an option rather than assuming it. Treat a question the user left
 unanswered as declined (apply nothing from it) and say so. Stop here if the user
 declines everything.
 
@@ -211,8 +250,8 @@ failure is attributable.
   never only one of them. Pin Alpine to a minor (`alpine:3.NN`) instead of
   `latest`.
 - Keep `frontend/package.json` `version` in step with `main.go` `version` only
-  if the user approved a bump (`package-lock.json` carries it twice, at the top
-  and under `packages[""]`).
+  if a bump was approved: `npm version <x.y.z> --no-git-tag-version` from
+  `frontend/` updates both places in `package-lock.json`.
 
 **Verification (mirror CI, `docker-publish.yml`)**
 - Backend (a local `frontend/node_modules` can add stray Go packages to `./...`
@@ -244,6 +283,9 @@ for one for this kind of change.
 
 ## Phase 6 — Wrap up
 
+Use this fixed table for the final report so runs are comparable: component,
+old → new, group, verification run, result.
+
 Report faithfully: what was updated (old → new), what verification ran and its
 result, what was skipped or failed, and what remains open. Do not describe
 something as verified if the check did not run.
@@ -261,5 +303,8 @@ type for a security update.
   `latest` tag as a "target".
 - Never use `npm audit fix --force`, `npm update` without a review of the diff,
   or `go get -u ./...` across majors blindly.
+- Examples in this file that name specific versions (Vite 8, ESLint 10, Go 1.27)
+  are historical illustrations, not current targets: always re-derive targets
+  from live data.
 - Do not write to shared services or publish anything; this skill only edits
   local files.
