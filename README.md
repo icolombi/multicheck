@@ -670,6 +670,15 @@ The `docker-compose.yml` file starts Multicheck alongside [Valkey](https://valke
 (a Redis-compatible cache). All services use `network_mode: host`, so the backend
 reaches the cache at `127.0.0.1:6379`.
 
+## ☁️ Azure Deployment
+
+[`deploy/azure/`](deploy/azure/README.md) contains the Terraform for a low-cost
+public deployment on Azure Container Apps (Consumption plan, scale to zero) at
+`https://multicheck.icolombi.net`. Frontend, backend and Valkey run as three
+containers of one replica, sharing `127.0.0.1` like the Compose setup, so the
+published GHCR images run unchanged. See its README for the two-step bootstrap
+(NS delegation at the registrar, then custom domain and managed certificate).
+
 ## 📝 Utility Files
 
 - `Makefile`: Build automation with commands for backend, frontend, and Docker

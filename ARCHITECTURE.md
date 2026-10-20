@@ -881,6 +881,22 @@ volumes:
 
 **Networking**: Multicheck connects to Valkey via host networking to match local development settings.
 
+### Azure Container Apps
+
+[`deploy/azure/`](deploy/azure/README.md) deploys the same images to Azure
+Container Apps with Terraform. One container app holds three containers in the
+same replica, so they share the network namespace exactly as with
+`network_mode: host`:
+
+- `frontend` (nginx, port 8081, ingress target) serves the SPA and proxies `/api/*`
+  to `127.0.0.1:8080`, stripping the prefix
+- `backend` (port 8080) uses the `config.toml` baked into the image
+- `valkey` (port 6379) is a non-persistent LRU cache, lost when the app scales to zero
+
+The app scales between 0 and 1 replicas and has no Log Analytics workspace. It is
+served at the apex of its own Azure DNS zone `multicheck.icolombi.net`, delegated
+from the registrar, with a free managed certificate.
+
 ## Testing
 
 ### Backend Test Coverage
@@ -1086,6 +1102,7 @@ Usable for:
 - [ ] Health check webhooks
 - [ ] Automatic scaling based on load
 - [ ] Docker Swarm/Kubernetes manifests
+- [ ] Azure Container Apps: unbound sidecar as dedicated DNSBL resolver (see `deploy/azure/README.md`)
 - [ ] CI/CD pipeline automation
 - [ ] Automated security scanning
 

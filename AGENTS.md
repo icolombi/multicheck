@@ -260,6 +260,16 @@ docker compose up    # Starts multicheck + valkey containers
 - All services use `network_mode: host`, so the backend reaches the cache at `127.0.0.1:6379` — there is no container network and no `redis:6379` hostname
 - Dockerfile uses multi-stage build: Go builder → Alpine runtime
 
+### Azure Deployment
+
+`deploy/azure/` is the Terraform for the public instance at
+`multicheck.icolombi.net`: Azure Container Apps (Consumption, 0–1 replicas, no Log
+Analytics), with frontend, backend and Valkey as three containers of one replica
+sharing `127.0.0.1`. Keep it independent of `k8s-homelab-azure`: own resource
+group, own DNS zone (delegated from GoDaddy), own state key. nginx listens on
+8081 there because the backend owns 8080 in the shared namespace. A new
+release is deployed by bumping `image_tag`.
+
 ### Concurrency Safety
 
 - Use `sync.Mutex` to protect shared map writes in goroutines
