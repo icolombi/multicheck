@@ -44,13 +44,17 @@ resource "azurerm_container_app" "this" {
       concurrent_requests = "50"
     }
 
-    # Consumption plan: the containers' CPU/memory must add up to a valid
-    # combination; 3 x 0.25 vCPU / 0.5Gi = 0.75 vCPU / 1.5Gi is one.
+    # Billing is per allocated (not used) vCPU/GiB-second, and in the Consumption
+    # plan the containers must add up to a valid combination. The split below
+    # totals 0.5 vCPU / 1Gi: actual usage is a few tens of MiB and near-zero CPU
+    # (the AKS requests are 10m / 32Mi per container). The smallest combination,
+    # 0.25 / 0.5Gi, is out of reach with three containers: azurerm requires at
+    # least 0.1 vCPU each, and the API accepts at most two decimal places.
     container {
       name   = "frontend"
       image  = "ghcr.io/icolombi/multicheck-frontend:${var.image_tag}"
-      cpu    = 0.25
-      memory = "0.5Gi"
+      cpu    = 0.1
+      memory = "0.2Gi"
 
       # The nginx template proxies /api/* to the backend, stripping the prefix
       # (the role the Envoy HTTPRoute plays on AKS).
@@ -67,8 +71,8 @@ resource "azurerm_container_app" "this" {
     container {
       name   = "backend"
       image  = "ghcr.io/icolombi/multicheck-backend:${var.image_tag}"
-      cpu    = 0.25
-      memory = "0.5Gi"
+      cpu    = 0.3
+      memory = "0.6Gi"
 
       liveness_probe {
         transport = "HTTP"
@@ -84,8 +88,8 @@ resource "azurerm_container_app" "this" {
     container {
       name    = "valkey"
       image   = var.valkey_image
-      cpu     = 0.25
-      memory  = "0.5Gi"
+      cpu     = 0.1
+      memory  = "0.2Gi"
       command = ["/bin/sh", "-c"]
       args    = ["exec valkey-server --maxmemory 96mb --maxmemory-policy allkeys-lru --save '' --appendonly no"]
     }
