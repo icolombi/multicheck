@@ -268,7 +268,8 @@ Analytics), with frontend, backend and Valkey as three containers of one replica
 sharing `127.0.0.1`. Keep it independent of `k8s-homelab-azure`: own resource
 group, own DNS zone (delegated from GoDaddy), own state key. nginx listens on
 8081 there because the backend owns 8080 in the shared namespace. A new
-release is deployed by bumping `image_tag`.
+release is deployed by bumping `image_tag` in `deploy/azure/terraform.tfvars`,
+which is versioned on purpose (it records what runs in production).
 
 ### Concurrency Safety
 

@@ -47,13 +47,17 @@ Design choices:
 The custom domain and its certificate can only be validated once the DNS
 delegation resolves, so they are behind `enable_custom_domain`.
 
+`backend.hcl` and `terraform.tfvars` are versioned: the first points at the shared
+state storage (not a credential: it requires Azure AD auth), the second is the
+record of what runs in production (`image_tag`, `enable_custom_domain`).
+
 ```bash
 cd deploy/azure
-cp backend.hcl.example backend.hcl   # fill in storage_account_name
 terraform init -backend-config=backend.hcl
 
-# 1) Everything except the custom domain
-terraform apply
+# 1) Everything except the custom domain (terraform.tfvars holds the
+#    production value true, so override it for a from-scratch bootstrap)
+terraform apply -var enable_custom_domain=false
 terraform output dns_zone_name_servers
 ```
 
@@ -68,8 +72,7 @@ dig +short multicheck.icolombi.net      # must return environment_static_ip
 
 ```bash
 # 3) Custom domain + managed certificate + binding
-cp terraform.tfvars.example terraform.tfvars   # set enable_custom_domain = true
-terraform apply
+terraform apply   # enable_custom_domain = true from terraform.tfvars
 curl -sSI https://multicheck.icolombi.net | head -n1
 ```
 
@@ -77,7 +80,7 @@ Certificate issuance usually takes a few minutes; the apply waits for it.
 
 ## Day-2
 
-- **New release**: change `image_tag` (variable or tfvars) and `terraform apply`.
+- **New release**: change `image_tag` in `terraform.tfvars` and `terraform apply`.
   A new revision replaces the old one; the domain binding is kept.
 - **Teardown**: `terraform destroy`, then remove the `multicheck` NS records at
   GoDaddy. Nothing in `k8s-homelab-azure` is affected.

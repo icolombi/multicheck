@@ -1,4 +1,0 @@
-# Copy to terraform.tfvars. Set to true only after the NS delegation at GoDaddy
-# resolves (`dig +short NS multicheck.icolombi.net`).
-enable_custom_domain = false
-# image_tag          = "1.6.8"

@@ -2,7 +2,3 @@
 *.tfstate
 *.tfstate.*
 crash.log
-*.tfvars
-!*.tfvars.example
-# Real backend settings: the storage account name embeds part of the subscription ID
-backend.hcl
