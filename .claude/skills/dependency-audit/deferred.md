@@ -45,14 +45,12 @@ Still open from earlier rounds:
 
 ## Not done in the last run
 
-- **`govulncheck`** found 6 stdlib vulnerabilities on Go 1.27.1 on 2026-10-16;
-  fixed by Go 1.27.2. It is **not installed** on this machine and installing it
-  was declined on 2026-10-22, so Go 1.27.3 has not been scanned. Offer it again.
-- **Lockfile tooling**: the local npm is 9.2 (Node 22) and strips `libc` fields
-  from `package-lock.json`; regenerating with npm 11 (`node:24-alpine`) adds
-  `inBundle` entries under `@tailwindcss/oxide-wasm32-wasi`. On 2026-10-22 only
-  the intended package entry was changed and `npm ci` was verified with both.
-  Behind the corporate TLS proxy, containers need
+- **`govulncheck`** is installed at `~/go/bin/govulncheck` (not on the bash
+  `PATH`, call it by full path). Go 1.27.3 on 2026-10-22: `No vulnerabilities
+  found.` Keep running it each audit.
+- **Local Node** is now 24.22.1 via `nvm.fish` (npm 11), matching CI and the
+  images, so `npm install` no longer churns `package-lock.json`. Behind the
+  corporate TLS proxy, containers running npm need
   `-e NODE_EXTRA_CA_CERTS=/ca.pem -v /etc/ssl/certs/netskope.pem:/ca.pem:ro`.
 - Indirect Go modules with newer versions (`testify`, `go-cmp`, `go-internal`,
   `golang.org/x/tools`, `x/mod`, `x/sync`) were left alone: they only appear in the viper test
