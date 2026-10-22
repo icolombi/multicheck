@@ -69,6 +69,7 @@ not reuse numbers from CLAUDE.md or from memory.
 | `Dockerfile` | `FROM golang:…`, `FROM alpine:…`, `GOTOOLCHAIN` |
 | `frontend/Dockerfile` | `FROM node:…`, `FROM nginxinc/nginx-unprivileged:…` |
 | `docker-compose.yml` | `valkey/valkey:…`, `node:…` (frontend-dev) |
+| `deploy/azure/*.tf` | `valkey_image` default in `variables.tf` (the production Valkey sidecar); `image_tag` in `terraform.tfvars` is the release, not a dependency |
 | `.github/workflows/*.yml` | every `uses: owner/action@vN`, `node-version`, `go-version(-file)` |
 | `frontend/package.json` | dependencies, devDependencies, `overrides` |
 | `frontend/package-lock.json` | resolved versions (what is really installed) |
@@ -160,6 +161,8 @@ must stay aligned:
   image, and the CI `go-version-file` really pointing at `go.mod`. When `go.mod` moves to a
   new minor, the image tag must move with it (the Dockerfile's
   `GOTOOLCHAIN=auto` only covers *patch* differences).
+- Valkey: `docker-compose.yml` vs `valkey_image` in `deploy/azure/variables.tf`.
+  Dev and production should run the same line and variant (e.g. both `-alpine`).
 - Docs: README/ARCHITECTURE/CLAUDE.md/AGENTS.md prerequisites (e.g. "Node.js
   22+") must match what CI and the images really use.
 
