@@ -31,11 +31,11 @@ variable "dns_zone_name" {
 variable "image_tag" {
   description = "Tag of ghcr.io/icolombi/multicheck-backend and multicheck-frontend to deploy (immutable semver, never latest)."
   type        = string
-  default     = "1.6.8"
+  default     = "1.6.9"
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.image_tag))
-    error_message = "image_tag must be a semver tag such as 1.6.8."
+    error_message = "image_tag must be a semver tag such as 1.6.9."
   }
 }
 
