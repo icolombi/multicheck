@@ -5,7 +5,7 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-10-18 (project at v1.6.8). All npm trials were run in
+Snapshot date: 2026-10-22 (project at v1.6.8). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
@@ -34,17 +34,26 @@ Still open from earlier rounds:
   stays supported until 2028-04, so there is no urgency. Kit 3 needs Node
   `>=22.17`, so either line works with it.
 
-## Optional, postponed on 2026-10-18
+## Optional, postponed on 2026-10-22
 
 - **Valkey image tag** `valkey/valkey:9` in `docker-compose.yml` is a floating
-  major; pinning to `9.1` was declined for now (check the tag exists first).
-- **TypeScript 7.0.2** still blocked: `@sveltejs/kit` peers `^6`,
-  `typescript-eslint` 8.71.2 requires `<6.1.0`.
+  major; pinning to `9.1` (9.1.2, EOL 2031-05) was declined again. Note that the
+  `9.2` tag existed but pointed at `9.2.0-rc1` on 2026-10-22: not a target until
+  a 9.2.0 GA is tagged.
+- **TypeScript 7.0.2** still blocked: `@sveltejs/kit` peers `^6.0.0`,
+  `typescript-eslint` 8.72.0 requires `<6.1.0`.
 
 ## Not done in the last run
 
 - **`govulncheck`** found 6 stdlib vulnerabilities on Go 1.27.1 on 2026-10-16;
-  fixed by Go 1.27.2 (now `No vulnerabilities found.`). Keep running it each audit.
+  fixed by Go 1.27.2. It is **not installed** on this machine and installing it
+  was declined on 2026-10-22, so Go 1.27.3 has not been scanned. Offer it again.
+- **Lockfile tooling**: the local npm is 9.2 (Node 22) and strips `libc` fields
+  from `package-lock.json`; regenerating with npm 11 (`node:24-alpine`) adds
+  `inBundle` entries under `@tailwindcss/oxide-wasm32-wasi`. On 2026-10-22 only
+  the intended package entry was changed and `npm ci` was verified with both.
+  Behind the corporate TLS proxy, containers need
+  `-e NODE_EXTRA_CA_CERTS=/ca.pem -v /etc/ssl/certs/netskope.pem:/ca.pem:ro`.
 - Indirect Go modules with newer versions (`testify`, `go-cmp`, `go-internal`,
   `golang.org/x/tools`, `x/mod`, `x/sync`) were left alone: they only appear in the viper test
   graph, not in the compiled binary.
