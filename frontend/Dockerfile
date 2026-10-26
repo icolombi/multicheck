@@ -10,9 +10,9 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.30-alpine
 
-# Porta di ascolto e upstream API sono configurabili a runtime via envsubst
-# (feature dei template nginx ufficiali). In Kubernetes /api viene ruotato dal
-# Gateway prima di arrivare qui; il proxy_pass serve per docker-compose/standalone.
+# Listen port and API upstream are configurable at runtime via envsubst
+# (a feature of the official nginx templates). In Kubernetes /api is routed by
+# the Gateway before reaching this container; proxy_pass is for docker-compose/standalone.
 ENV NGINX_PORT=8080 \
     API_UPSTREAM=http://127.0.0.1:8080
 

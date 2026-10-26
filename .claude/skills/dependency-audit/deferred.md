@@ -5,7 +5,7 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-10-22 (project at v1.6.9). All npm trials were run in
+Snapshot date: 2026-10-26 (project at v1.6.9). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
@@ -34,27 +34,36 @@ Still open from earlier rounds:
   stays supported until 2028-04, so there is no urgency. Kit 3 needs Node
   `>=22.17`, so either line works with it.
 
-## Optional, postponed on 2026-10-22
+## Optional, postponed on 2026-10-26
 
 - **Valkey image tag** `valkey/valkey:9` in `docker-compose.yml` is a floating
-  major; pinning to `9.1` (9.1.2, EOL 2031-05) was declined again. Note that the
-  `9.2` tag existed but pointed at `9.2.0-rc1` on 2026-10-22: not a target until
-  a 9.2.0 GA is tagged.
-- **TypeScript 7.0.2** still blocked: `@sveltejs/kit` peers `^6.0.0`,
+  major on the Debian variant, while production (`deploy/azure/variables.tf`)
+  runs `9.1.2-alpine`. Aligning dev to `9.1.2-alpine` was declined (third time).
+  `9.2` still points at `9.2.0-rc1` on 2026-10-26: not a target until GA.
+- **TypeScript 7.0.2** still blocked: `@sveltejs/kit` 3.1.0 peers `^6.0.0`,
   `typescript-eslint` 8.72.0 requires `<6.1.0`.
+- **nginx runtime CVEs**: trivy on `nginxinc/nginx-unprivileged:1.30-alpine`
+  (2026-10-26) found HIGH CVE-2026-111497 (`brotli-libs` 1.2.0-r1, fixed
+  1.2.1-r0) and CVE-2026-92392 (`curl`/`libcurl` 8.22.0-r0, fixed 8.23.0-r0).
+  nginx links neither; an `apk upgrade` in `frontend/Dockerfile` was declined in
+  favour of waiting for the upstream rebuild. Re-scan next run.
+- **`.nvmrc`** pinning Node 24 for local work was declined.
 
 ## Not done in the last run
 
-- **`govulncheck`** is installed at `~/go/bin/govulncheck` (not on the bash
-  `PATH`, call it by full path). Go 1.27.3 on 2026-10-22: `No vulnerabilities
-  found.` Keep running it each audit.
-- **Local Node** is now 24.22.1 via `nvm.fish` (npm 11), matching CI and the
-  images, so `npm install` no longer churns `package-lock.json`. Behind the
+- **`govulncheck`** is now at `/usr/bin/govulncheck` (on `PATH`). Go 1.27.3 on
+  2026-10-26: `No vulnerabilities found.` Keep running it each audit.
+- **Local Node** was 26.8.1 (npm 12) on 2026-10-26, not the 24.x used by CI and
+  the images: run `nvm use 24` before any `npm install`, or the lockfile may
+  churn. Behind the
   corporate TLS proxy, containers running npm need
   `-e NODE_EXTRA_CA_CERTS=/ca.pem -v /etc/ssl/certs/netskope.pem:/ca.pem:ro`.
 - Indirect Go modules with newer versions (`testify`, `go-cmp`, `go-internal`,
-  `golang.org/x/tools`, `x/mod`, `x/sync`) were left alone: they only appear in the viper test
+  `golang.org/x/tools`, `x/mod`) were left alone: they only appear in the viper test
   graph, not in the compiled binary.
 - `github.com/gorilla/mux` (last release v1.8.1, 2023-10) and
   `github.com/dchest/validator` (single maintainer) are maintenance-risk
   notes, not findings; no replacement was proposed.
+- `node:24-alpine` (builder only) carries HIGH CVEs in npm's own bundled
+  packages (`undici`, `brace-expansion`, `http-cache-semantics`); nothing from
+  that stage ships, so not actionable.
