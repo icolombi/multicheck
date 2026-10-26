@@ -33,6 +33,16 @@ updates:
       # Majors (e.g. the Node LTS line) are chosen by the skill, not by a bot.
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # nginx odd minors are the mainline branch; the project runs stable (even
+      # minors) only. Dependabot has no "odd only" matcher, so each odd branch is
+      # listed explicitly (Ruby requirement syntax): extend when 1.39 is near.
+      - dependency-name: "nginxinc/nginx-unprivileged"
+        versions:
+          - "~> 1.31.0"
+          - "~> 1.33.0"
+          - "~> 1.35.0"
+          - "~> 1.37.0"
+          - "~> 1.39.0"
 
   - package-ecosystem: github-actions
     directory: /
