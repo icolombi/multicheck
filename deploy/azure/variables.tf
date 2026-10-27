@@ -42,7 +42,7 @@ variable "image_tag" {
 variable "valkey_image" {
   description = "Valkey image used as an in-memory cache sidecar."
   type        = string
-  default     = "docker.io/valkey/valkey:9.1.2-alpine"
+  default     = "docker.io/valkey/valkey:9.1.3-alpine"
 }
 
 variable "max_replicas" {
