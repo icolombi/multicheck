@@ -840,7 +840,7 @@ services:
       network_mode: host
   
    valkey:
-      image: docker.io/valkey/valkey:9
+      image: docker.io/valkey/valkey:9.1.3-alpine
       network_mode: host
       command: valkey-server /usr/local/etc/valkey/valkey.conf
       volumes:
