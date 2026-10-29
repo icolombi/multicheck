@@ -64,10 +64,11 @@ image build.
 - `github.com/gorilla/mux` (last release v1.8.1, 2023-10) and
   `github.com/dchest/validator` (single maintainer) are maintenance-risk
   notes, not findings; no replacement was proposed.
-- `node:24-alpine` (builder only) carried HIGH CVEs in npm's own bundled
-  packages (`undici`, `brace-expansion`, `http-cache-semantics`); nothing from
-  that stage ships, so not actionable. `node:26-alpine` has not been scanned
-  yet: do it next run.
+- `node:26-alpine` (builder only; scanned 2026-10-29, image built 2026-10-28)
+  has no HIGH/CRITICAL in its Alpine packages. Six HIGH CVEs sit in npm's own
+  bundled packages (`undici` 6.28.0, `brace-expansion` 5.0.9) under
+  `/usr/local/lib/node_modules/npm`; nothing from that stage ships, so not
+  actionable (same picture as `node:24-alpine` before it).
 - `deepmerge` 4.3.1 (GHSA-gcqx-w48m-w2h4, low) comes in through
   `@sveltejs/vite-plugin-svelte`, build-time only; no fixed release exists
   (4.3.1 is the latest). `npm audit --omit=dev` is clean.
