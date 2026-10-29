@@ -36,7 +36,7 @@
   },
   "type": "module",
   "dependencies": {
-    "@lucide/svelte": "^1.62.0",
+    "@lucide/svelte": "^1.64.0",
     "svelte-sonner": "^1.2.2",
     "zod": "^4.0.0"
   },
