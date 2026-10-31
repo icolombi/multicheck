@@ -7,4 +7,4 @@
 enable_custom_domain = true
 
 # Release deployed in production: bump it and run `terraform apply`.
-image_tag = "1.6.10"
+image_tag = "1.6.11"
