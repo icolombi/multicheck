@@ -5,7 +5,7 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-10-31 (project at v1.6.10). All npm trials were run in
+Snapshot date: 2026-11-01 (project at v1.6.11). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
@@ -22,8 +22,8 @@ scans `build/`), and the `cookie` override was removed. Verified with `check`,
 Still open from earlier rounds:
 
 - **TypeScript is held at `~6.0.3` on purpose**: TypeScript 7 (7.0.2 exists) is
-  excluded while `@sveltejs/kit` (3.1.1 on 2026-10-31) peers stop at `^6` and
-  `typescript-eslint` (8.72.1 on 2026-10-31) requires `<6.1.0`. Re-check both peer ranges
+  excluded while `@sveltejs/kit` (3.1.1 on 2026-11-01) peers stop at `^6` and
+  `typescript-eslint` (8.72.1 on 2026-11-01) requires `<6.1.0`. Re-check both peer ranges
   before moving.
 
 Node moved from 24 to 26 (Active LTS since 2026-10-28) on 2026-10-29 on branch
@@ -32,23 +32,16 @@ Node moved from 24 to 26 (Active LTS since 2026-10-28) on 2026-10-29 on branch
 (lockfile unchanged), `check`, `lint`, `build`, `vite dev` smoke test and an
 image build.
 
-## Optional, postponed on 2026-10-31
+## Optional, postponed on 2026-11-01
 
-- **Valkey 9.2** still only `9.2.0-rc1` on 2026-10-31: not a target until GA.
+- **Valkey 9.2** still only `9.2.0-rc1` on 2026-11-01: not a target until GA. The
+  floating `9.2` / `9.2-alpine` tags point at the RC: never use them.
   Dev (`docker-compose.yml`) and production (`deploy/azure/variables.tf`) were
   aligned on `9.1.3-alpine` on 2026-10-27; keep them pinned to the same tag.
-- **nginx runtime CVEs**: trivy on `nginxinc/nginx-unprivileged:1.30-alpine`
-  (re-scanned 2026-10-31 after `docker pull`, upstream image still built 2026-10-19) found
-  CVE-2026-111497 (`brotli-libs` 1.2.0-r1, fixed 1.2.1-r0), **re-rated
-  CRITICAL** (was HIGH), and HIGH CVE-2026-92392 (`curl`/`libcurl` 8.22.0-r0,
-  fixed 8.23.0-r0). nginx links neither; an `apk upgrade` in
-  `frontend/Dockerfile` was declined in favour of waiting for the upstream
-  rebuild (declined again on 2026-10-27, 2026-10-29 and 2026-10-31).
-  Re-scan next run, after a `docker pull` so trivy does not read a stale image.
 - **`.nvmrc`** pinning the CI Node line for local work was declined.
 - **`minimatch` GHSA-g3hv-75wg-m249** (moderate DoS, `<11.0.1`), reached via
   `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree`,
-  all of which still require `^10.2.x` (eslint 10.14.0 on 2026-10-31). Dev-only,
+  all of which still require `^10.2.x` (eslint 10.14.0 on 2026-11-01). Dev-only,
   and the globs come from our own ESLint config. An `overrides.minimatch: ^11.0.3`
   passed check/lint/build in a trial (the APIs ESLint uses, `new Minimatch().match`,
   `minimatch()` and `flipNegate`, survive in 11; `makeRe` was removed) but was
@@ -60,15 +53,21 @@ image build.
 
 ## Not done in the last run
 
+- **nginx runtime CVEs**: resolved on 2026-11-01 by `RUN apk upgrade --no-cache`
+  in the nginx stage of `frontend/Dockerfile` (as root, then back to `USER 101`).
+  trivy on the built image: 0 HIGH/CRITICAL. Keep scanning the *built* image, not
+  only the upstream tag; drop the `apk upgrade` only if it ever breaks a build.
 - **`govulncheck`** is at `/usr/bin/govulncheck` (on `PATH`). Go 1.27.3 on
-  2026-10-31: `No vulnerabilities found.` Keep running it each audit.
-- **Local Node** is 26.10.0 on 2026-10-31, the same line as CI, so lockfile
+  2026-11-01: `No vulnerabilities found.` Keep running it each audit.
+- **Local Node** is 26.10.0 on 2026-11-01, the same line as CI, so lockfile
   changes can run on the host. Behind the corporate TLS proxy, containers
   running npm need
   `-e NODE_EXTRA_CA_CERTS=/ca.pem -v /etc/ssl/certs/netskope.pem:/ca.pem:ro`.
 - Indirect Go modules with newer versions (`testify`, `go-cmp`, `go-internal`,
-  `golang.org/x/tools`, `x/mod`; unchanged on 2026-10-31) were left alone: they only appear in the viper test
-  graph, not in the compiled binary.
+  `golang.org/x/tools`, `x/mod`; unchanged on 2026-11-01) were left alone: they only appear in the viper test
+  graph, not in the compiled binary. `go.yaml.in/yaml/v3` is the exception: it
+  **is** linked (viper's YAML codec), so update it when a release appears
+  (v3.0.5 -> v3.0.6 applied on 2026-11-01).
 - `github.com/gorilla/mux` (last release v1.8.1, 2023-10) and
   `github.com/dchest/validator` (single maintainer) are maintenance-risk
   notes, not findings; no replacement was proposed.
