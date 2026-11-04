@@ -5,7 +5,7 @@ file in Phase 0, **re-verifies every item against current data** (versions,
 EOL dates and peer ranges below are a snapshot), and deletes an entry once it
 has been applied or is no longer relevant.
 
-Snapshot date: 2026-11-01 (project at v1.6.11). All npm trials were run in
+Snapshot date: 2026-11-04 (project at v1.6.12). All npm trials were run in
 throwaway copies of `frontend/`: `npm run check`, `lint` and `build` only. Dev
 server and runtime behaviour were not exercised.
 
@@ -22,8 +22,8 @@ scans `build/`), and the `cookie` override was removed. Verified with `check`,
 Still open from earlier rounds:
 
 - **TypeScript is held at `~6.0.3` on purpose**: TypeScript 7 (7.0.2 exists) is
-  excluded while `@sveltejs/kit` (3.1.1 on 2026-11-01) peers stop at `^6` and
-  `typescript-eslint` (8.72.1 on 2026-11-01) requires `<6.1.0`. Re-check both peer ranges
+  excluded while `@sveltejs/kit` (3.1.1 on 2026-11-04) peers stop at `^6` and
+  `typescript-eslint` (8.72.1 on 2026-11-04) requires `<6.1.0`. Re-check both peer ranges
   before moving.
 
 Node moved from 24 to 26 (Active LTS since 2026-10-28) on 2026-10-29 on branch
@@ -32,22 +32,22 @@ Node moved from 24 to 26 (Active LTS since 2026-10-28) on 2026-10-29 on branch
 (lockfile unchanged), `check`, `lint`, `build`, `vite dev` smoke test and an
 image build.
 
-## Optional, postponed on 2026-11-01
+## Optional, postponed (last re-checked 2026-11-04)
 
-- **Valkey 9.2** still only `9.2.0-rc1` on 2026-11-01: not a target until GA. The
+- **Valkey 9.2** still only `9.2.0-rc1` on 2026-11-04: not a target until GA. The
   floating `9.2` / `9.2-alpine` tags point at the RC: never use them.
   Dev (`docker-compose.yml`) and production (`deploy/azure/variables.tf`) were
   aligned on `9.1.3-alpine` on 2026-10-27; keep them pinned to the same tag.
 - **`.nvmrc`** pinning the CI Node line for local work was declined.
 - **`minimatch` GHSA-g3hv-75wg-m249** (moderate DoS, `<11.0.1`), reached via
   `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree`,
-  all of which still require `^10.2.x` (eslint 10.14.0 on 2026-11-01). Dev-only,
+  all of which still require `^10.2.x` (eslint 10.14.0 on 2026-11-04). Dev-only,
   and the globs come from our own ESLint config. An `overrides.minimatch: ^11.0.3`
   passed check/lint/build in a trial (the APIs ESLint uses, `new Minimatch().match`,
   `minimatch()` and `flipNegate`, survive in 11; `makeRe` was removed) but was
   declined: wait for ESLint to move to minimatch 11, then drop the issue.
 - **`node:26-alpine`** is a bare-major tag (`frontend/Dockerfile`,
-  `docker-compose.yml`); pinning to `node:26.13-alpine` was declined.
+  `docker-compose.yml`); pinning to `node:26.13-alpine` was declined (again on 2026-11-04).
 - **Dependabot `docker-compose` ecosystem** (the `docker` ecosystem does not read
   `docker-compose.yml`, so its Valkey and Node tags are never bumped) was declined.
 
@@ -55,16 +55,19 @@ image build.
 
 - **nginx runtime CVEs**: resolved on 2026-11-01 by `RUN apk upgrade --no-cache`
   in the nginx stage of `frontend/Dockerfile` (as root, then back to `USER 101`).
-  trivy on the built image: 0 HIGH/CRITICAL. Keep scanning the *built* image, not
+  trivy on the built image: 0 HIGH/CRITICAL. On 2026-11-04 the Docker daemon was
+  down, so the built image was **not** scanned; the upstream
+  `nginx-unprivileged:1.30-alpine` (Alpine 3.24.2) showed 6 HIGH, all fixable,
+  which the `apk upgrade` is there to cover. Re-scan the built image next run. Keep scanning the *built* image, not
   only the upstream tag; drop the `apk upgrade` only if it ever breaks a build.
 - **`govulncheck`** is at `/usr/bin/govulncheck` (on `PATH`). Go 1.27.3 on
-  2026-11-01: `No vulnerabilities found.` Keep running it each audit.
-- **Local Node** is 26.10.0 on 2026-11-01, the same line as CI, so lockfile
+  2026-11-04: `No vulnerabilities found.` Keep running it each audit.
+- **Local Node** is 26.10.0 on 2026-11-04, the same line as CI, so lockfile
   changes can run on the host. Behind the corporate TLS proxy, containers
   running npm need
   `-e NODE_EXTRA_CA_CERTS=/ca.pem -v /etc/ssl/certs/netskope.pem:/ca.pem:ro`.
 - Indirect Go modules with newer versions (`testify`, `go-cmp`, `go-internal`,
-  `golang.org/x/tools`, `x/mod`; unchanged on 2026-11-01) were left alone: they only appear in the viper test
+  `golang.org/x/tools`, `x/mod`; unchanged on 2026-11-04) were left alone: they only appear in the viper test
   graph, not in the compiled binary. `go.yaml.in/yaml/v3` is the exception: it
   **is** linked (viper's YAML codec), so update it when a release appears
   (v3.0.5 -> v3.0.6 applied on 2026-11-01).
