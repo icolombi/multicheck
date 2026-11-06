@@ -86,7 +86,7 @@ Functions:
 ## Caching
 
 | Endpoint | Cache Key Format | TTL Source | Fields Cached |
-|----------|-----------------|------------|---------------|
+| --- | --- | --- | --- |
 | GET /ip/{ip} | IP address (as-is) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidIP`, `TimeTaken`, `Errors` |
 | GET /domain/{domain} | Domain name (as-is) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidDomain`, `TimeTaken`, `Errors` |
 | POST /ip/check | `post:ip:<ip>:<hash>` (hash = 16-char truncated SHA256 of sorted blacklist array) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidIP`, `TimeTaken`, `Errors` |
@@ -133,6 +133,7 @@ long", `dnsQueryTimeout = 0` hands an already-expired context to every lookup,
 `validateConfig()` runs at startup and refuses to start on a configuration that
 cannot produce correct results (no blacklists at all, or a `nameServers` entry that
 is not an IP). Failing loudly beats serving nonsense from a broken resolver.
+
 - Cached response includes all fields: `BlackListed`, `BlackList`, `ValidIP`/`ValidDomain`, `TimeTaken`
 - Set `Cached: true` in response when served from Redis
 
@@ -191,7 +192,7 @@ Tests now include visual enhancements for better readability:
 [main_integration_test.go](../main_integration_test.go) contains the endpoint tests (build tag `integration`):
 
 | Test Function | Endpoint | Input | Expected Assertion |
-|--------------|----------|-------|-------------------|
+| --- | --- | --- | --- |
 | `TestHealthCheckHandler` | GET /health | — | HTTP 200, Redis connected, uptime and version fields present |
 | `TestDomainBlacklist` | GET /domain/{domain} | `test.uribl.com` | Response contains 127.0.0.14 from `multi.uribl.com` |
 | `TestIPBlacklist` | GET /ip/{ip} | `2.0.0.127` | Response contains 127.0.0.11 from `zen.spamhaus.org` |
@@ -244,6 +245,12 @@ verification jobs: `verify-backend` (gofmt, `go vet` with and without the
 `lint`, `build`). The `build` job carries `needs: [verify-backend, verify-frontend]`
 — **do not remove it**: images were previously published from code no automated
 check had ever seen.
+
+The `build` job passes `APK_REFRESH=${{ github.run_id }}` to bust the layer cache
+of `RUN apk upgrade` in `frontend/Dockerfile`. **Do not remove it**: with the `gha`
+cache that step otherwise stays `CACHED` for as long as the base image digest does
+not change, and a release silently ships old packages (1.6.13 did). A clean local
+build does not prove the published image is clean: scan the image on GHCR.
 
 Integration tests are deliberately excluded from CI: they need a Redis instance and
 live DNS access to third-party DNSBL servers whose answers the project does not

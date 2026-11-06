@@ -15,6 +15,11 @@ FROM nginxinc/nginx-unprivileged:1.30-alpine
 # lagged for weeks). The base image runs as UID 101 and apk needs root, so we
 # switch to root only for this step and drop back to the image's own user:
 # the container must keep running unprivileged.
+# APK_REFRESH changes on every CI run. Without it the step's cache key never
+# changes while the base image digest is unchanged, so the CI layer cache replays
+# the packages of the first build and new fixes never reach the image: 1.6.13
+# shipped the libexpat of 1.6.12 this way. Local builds leave it at the default.
+ARG APK_REFRESH=local
 USER root
 RUN apk upgrade --no-cache
 USER 101
