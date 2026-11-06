@@ -1,12 +1,12 @@
 terraform {
-  required_version = ">= 1.15.4"
+  required_version = ">= 1.17.0"
 
   # Pessimistic constraints: a major upgrade never slips in through
   # `terraform init -upgrade` without a deliberate edit here.
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 5.10"
+      version = "~> 5.13"
     }
     # Only used to bind the managed certificate to the custom domain: azurerm
     # can create both, but has no way to attach one to the other (see main.tf).

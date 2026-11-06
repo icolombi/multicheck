@@ -10,10 +10,12 @@ permissions:
   packages: write
 
 jobs:
+  # Runners are pinned to an LTS image: ubuntu-latest moves to a new release on
+  # GitHub's schedule, which changes the build environment without any commit.
   # Verification runs before anything is published: images used to be built and
   # pushed from code that no automated check had ever looked at.
   verify-backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -46,7 +48,7 @@ jobs:
         run: go test -race ./...
 
   verify-frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: ./frontend
@@ -76,7 +78,7 @@ jobs:
 
   build:
     needs: [verify-backend, verify-frontend]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:

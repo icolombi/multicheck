@@ -1,20 +1,20 @@
 # Multicheck on Azure Container Apps
 
-Low-cost public deployment of Multicheck at **https://multicheck.icolombi.net**,
+Low-cost public deployment of Multicheck at **<https://multicheck.icolombi.net>**,
 without a Kubernetes cluster. Independent of `k8s-homelab-azure`: own resource
 group, own DNS zone, own Terraform state key.
 
 ## What it creates
 
 | Resource | Name | Cost |
-|---|---|---|
+| --- | --- | --- |
 | Resource group | `rg-multicheck-prod-italynorth` | — |
 | Container Apps environment (Consumption) | `cae-multicheck-prod-italynorth` | none when idle |
 | Container App, 3 containers in one replica | `ca-multicheck-prod` | per second of activity, mostly inside the monthly free grant |
 | Public DNS zone | `multicheck.icolombi.net` | ~€0.50/month |
 | Managed TLS certificate | `cert-multicheck-icolombi-net` | free, auto-renewed |
 
-```
+```text
 Internet ──HTTPS──▶ Container Apps ingress ──▶ :8081 frontend (nginx, SPA)
                                                    │ /api/* (prefix stripped)
                                                    ▼
@@ -39,7 +39,7 @@ Design choices:
 
 ## Prerequisites
 
-- Terraform >= 1.15.4, Azure CLI logged in to the target subscription.
+- Terraform >= 1.17.0, Azure CLI logged in to the target subscription.
 - The GHCR packages `multicheck-backend` and `multicheck-frontend` are public.
 
 ## First deployment (two applies)
@@ -61,9 +61,9 @@ terraform apply -var enable_custom_domain=false
 terraform output dns_zone_name_servers
 ```
 
-2) At GoDaddy, in the `icolombi.net` DNS zone, add **four NS records** with host
-   `multicheck`, one for each name server in the output (remove any trailing dot
-   if GoDaddy complains). Then wait until delegation is live:
+Step 2: at GoDaddy, in the `icolombi.net` DNS zone, add **four NS records** with host
+`multicheck`, one for each name server in the output (remove any trailing dot
+if GoDaddy complains). Then wait until delegation is live:
 
 ```bash
 dig +short NS multicheck.icolombi.net   # must return the Azure name servers

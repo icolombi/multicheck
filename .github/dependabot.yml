@@ -48,3 +48,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # Bumps the provider lockfile; the pessimistic constraints in versions.tf keep
+  # majors out, so they stay a deliberate edit like everywhere else in this file.
+  - package-ecosystem: terraform
+    directory: /deploy/azure
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
