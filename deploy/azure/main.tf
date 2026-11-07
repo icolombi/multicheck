@@ -185,7 +185,7 @@ resource "azurerm_container_app_environment_managed_certificate" "this" {
 resource "azapi_update_resource" "bind_certificate" {
   count = var.enable_custom_domain ? 1 : 0
 
-  type        = "Microsoft.App/containerApps@2026-01-01"
+  type        = "Microsoft.App/containerApps@2026-07-01"
   resource_id = azurerm_container_app.this.id
 
   body = {
