@@ -3,19 +3,19 @@
 <!-- Maintained by the stack-audit skill. Safe to edit by hand: keep the headings and the table columns. -->
 
 - Last full audit: 2026-11-06
-- Last audit: 2026-11-06
-- Commit audited: `9850da8`
+- Last audit: 2026-11-08 (incremental; upstream data reused, vulnerability scans rerun)
+- Commit audited: `2512905`
 
 ## Components
 
 | Component | Category | In use | Declared in | Latest | Recommended | EOL | Status | Source | Checked |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Go | runtime | 1.27.3 | `go.mod:3`, `Dockerfile:1` | 1.27.3 | 1.27 (no LTS, newest stable) | none announced | OK | endoflife.date | 2026-11-06 |
-| Node.js (`node:26-alpine`) | runtime / builder image | 26 (tag resolves to 26.13.0) | `frontend/Dockerfile:1`, `docker-compose.yml`, `.github/workflows/docker-publish.yml` | 26.13.0 | 26 (LTS) | 2029-04-30 | VULN (6 HIGH in npm's bundled `undici`, `brace-expansion`; builder stage only, nothing ships) | endoflife.date, trivy | 2026-11-06 |
-| `golang:1.27` (Debian 13.7) | builder image | 1.27 | `Dockerfile:1` | 1.27.3 | 1.27 | Debian 13: 2030-06-30 | VULN (118 HIGH/CRITICAL matches, 54 unique CVEs, 0 fixable; builder stage only, nothing ships) | endoflife.date, trivy | 2026-11-06 |
+| Node.js (`node:26-alpine`) | runtime / builder image | 26 (tag resolves to 26.13.0) | `frontend/Dockerfile:1`, `docker-compose.yml`, `.github/workflows/docker-publish.yml` | 26.13.0 | 26 (LTS) | 2029-04-30 | VULN (trivy 2026-11-08: 6 HIGH in npm's bundled `undici`, `brace-expansion`, all fixable upstream; builder stage only, nothing ships) | endoflife.date, trivy | 2026-11-06 |
+| `golang:1.27` (Debian 13.7) | builder image | 1.27 | `Dockerfile:1` | 1.27.3 | 1.27 | Debian 13: 2030-06-30 | VULN (trivy 2026-11-08: 117 HIGH/CRITICAL matches, 53 unique CVEs, 2 fixable in `zlib1g` via `+deb13u1`; builder stage only, nothing ships) | endoflife.date, trivy | 2026-11-06 |
 | Alpine (backend runtime) | base image | 3.24 | `Dockerfile:23` | 3.24.4 | 3.24 | 2028-06-01 | OK | endoflife.date, Docker Hub, trivy | 2026-11-06 |
-| `nginxinc/nginx-unprivileged` | base image | 1.30-alpine (Alpine 3.24.2, built 2026-10-19) | `frontend/Dockerfile:11` | 1.30.6 stable, 1.31.8 mainline | 1.30 (stable, project policy) | none announced | VULN (1 CRITICAL, 7 HIGH upstream, all fixed in Alpine 3.24; covered at build time by `apk upgrade`) | endoflife.date, Docker Hub, trivy | 2026-11-06 |
-| `multicheck-frontend` published image | release image | 1.6.14 (live `/health` checked 2026-11-06) | `deploy/azure/terraform.tfvars` | 1.6.14 | 1.6.14 | n/a | OK (1.6.13 is skipped: same CVEs as 1.6.12) | trivy on GHCR image | 2026-11-06 |
+| `nginxinc/nginx-unprivileged` | base image | 1.30-alpine (Alpine 3.24.2, built 2026-10-19) | `frontend/Dockerfile:11` | 1.30.6 stable, 1.31.8 mainline | 1.30 (stable, project policy) | none announced | VULN (trivy 2026-11-08: 1 CRITICAL, 7 HIGH upstream, upstream image still from 2026-10-19, all fixed in Alpine 3.24; covered at build time by `apk upgrade`) | endoflife.date, Docker Hub, trivy | 2026-11-06 |
+| `multicheck-frontend` published image | release image | 1.6.14 (live `/health` checked 2026-11-06) | `deploy/azure/terraform.tfvars` | 1.6.14 | 1.6.14 | n/a | OK (trivy 2026-11-08: 0 HIGH/CRITICAL; 1.6.13 is skipped: same CVEs as 1.6.12) | trivy on GHCR image | 2026-11-06 |
 | `multicheck-backend` published image | release image | 1.6.14 (live `/health` checked 2026-11-06) | `deploy/azure/terraform.tfvars` | 1.6.14 | 1.6.14 | n/a | OK | trivy on GHCR image | 2026-11-06 |
 | Valkey | service | 9.1.3-alpine | `docker-compose.yml`, `deploy/azure/variables.tf:45` | 9.1.3 (9.2.0-rc2 is a pre-release) | 9.1 | 2031-05-19 | OK | endoflife.date, GitHub releases, trivy | 2026-11-06 |
 | SvelteKit | framework | 3.1.1 | `frontend/package.json` | 3.1.1 | 3.1 | not tracked | OK | npm | 2026-11-06 |
@@ -40,14 +40,14 @@
 | Terraform CLI | IaC | >= 1.17.0 (local 1.17.1) | `deploy/azure/versions.tf:2` | 1.17.1 | 1.17 | none announced | OK | endoflife.date | 2026-11-06 |
 | `hashicorp/azurerm` | IaC provider | 5.13.0 | `deploy/azure/versions.tf`, `.terraform.lock.hcl` | 5.13.0 | 5.13 | not tracked | OK | Terraform Registry | 2026-11-06 |
 | `azure/azapi` | IaC provider | 2.13.0 | `deploy/azure/versions.tf`, `.terraform.lock.hcl` | 2.13.0 | 2.13 | not tracked | OK | Terraform Registry | 2026-11-06 |
-| `Microsoft.App/containerApps` API | managed service | 2026-01-01 | `deploy/azure/main.tf:188` | 2026-07-01 | 2026-07-01 | retirement not checked | OUTDATED | azure-rest-api-specs | 2026-11-06 |
+| `Microsoft.App/containerApps` API | managed service | 2026-07-01 | `deploy/azure/main.tf:188` | 2026-07-01 | 2026-07-01 | not announced | OK (bumped 2026-11-08; plan: 1 in-place change, body unchanged) | azure-rest-api-specs | 2026-11-06 |
 
 ## Dependency groups
 
 | Group | Manifest | Direct deps | Behind (major) | Vulnerable | Checked |
 | --- | --- | --- | --- | --- | --- |
-| npm | `frontend/package.json` | 24 | 1 (TypeScript, accepted) | 0 HIGH/CRITICAL; 10 moderate, 5 low, all dev-only (`npm audit --omit=dev` clean) | 2026-11-06 |
-| Go modules | `go.mod` | 4 | 0 | 0 (`govulncheck`, trivy) | 2026-11-06 |
+| npm | `frontend/package.json` | 24 | 1 (TypeScript, accepted) | 0 HIGH/CRITICAL; 10 moderate, 5 low, all dev-only (`npm audit --omit=dev` clean) | 2026-11-08 |
+| Go modules | `go.mod` | 4 | 0 | 0 (`govulncheck`, trivy) | 2026-11-08 |
 
 ## Accepted exceptions
 
@@ -73,7 +73,7 @@ Fingerprints used by `scan-manifests.sh --check` to detect changes.
 | `.github/workflows/docker-publish.yml` | `024ddf5837e6` |
 | `Dockerfile` | `cd75fe4aecaa` |
 | `deploy/azure/.terraform.lock.hcl` | `0df24571c01d` |
-| `deploy/azure/main.tf` | `90d342a4c88c` |
+| `deploy/azure/main.tf` | `d780ac1c2f0a` |
 | `deploy/azure/outputs.tf` | `24fc4a8b07d8` |
 | `deploy/azure/variables.tf` | `186696245080` |
 | `deploy/azure/versions.tf` | `dfd8ef851f03` |
