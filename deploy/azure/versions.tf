@@ -6,7 +6,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 5.13"
+      version = "~> 5.14"
     }
     # Only used to bind the managed certificate to the custom domain: azurerm
     # can create both, but has no way to attach one to the other (see main.tf).
