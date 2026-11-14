@@ -408,7 +408,7 @@ curl -X DELETE http://localhost:8080/clear-cache/post:domain:example.com:f7b2d9e
 **Status codes:**
 
 | Code | Meaning |
-|------|---------|
+| ------ | --------- |
 | `200` | The key was deleted |
 | `400` | The key is not one this service could have written (see below) |
 | `500` | Redis returned an error on the delete |
@@ -492,7 +492,7 @@ value below, so a `config.toml` written before a key existed keeps working after
 upgrade:
 
 | Parameter | Default | Parameter | Default |
-|-----------|---------|-----------|---------|
+| --- | --- | --- | --- |
 | `cacheControlMaxAge` | `3600` | `httpReadTimeout` | `30` |
 | `redisCacheTTL` | `300` | `httpWriteTimeout` | `30` |
 | `maxCustomBlacklists` | `20` | `httpIdleTimeout` | `60` |
