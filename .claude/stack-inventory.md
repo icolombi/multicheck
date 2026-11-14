@@ -4,7 +4,7 @@
 
 - Last full audit: 2026-11-06
 - Last audit: 2026-11-14 (incremental; all upstream data refreshed, cache older than 7 days; vulnerability scans rerun)
-- Commit audited: `2bc40bb`
+- Commit audited: `01620a8`
 
 ## Components
 
@@ -15,8 +15,8 @@
 | `golang:1.27` (Debian 13.7) | builder image | 1.27 | `Dockerfile:1` | 1.27.4 | 1.27 | Debian 13: 2030-06-30 | VULN (trivy 2026-11-14: 183 HIGH/CRITICAL matches, 74 unique CVEs, 1 CRITICAL in `openssh-client` with no Debian fix, 8 fixable; builder stage only, nothing ships) | endoflife.date, trivy | 2026-11-14 |
 | Alpine (backend runtime) | base image | 3.24 | `Dockerfile:23` | 3.24.4 | 3.24 | 2028-06-01 | OK (trivy 2026-11-14: 0 HIGH/CRITICAL) | endoflife.date, trivy | 2026-11-14 |
 | `nginxinc/nginx-unprivileged` | base image | 1.30-alpine (Alpine 3.24.2) | `frontend/Dockerfile:11` | 1.30.6 stable, 1.31.8 mainline | 1.30 (stable, project policy) | none announced | VULN (trivy 2026-11-14: 1 CRITICAL `brotli-libs`, 10 HIGH unique in `libexpat`, `libxslt`, `musl`, `zlib`, `curl`; all fixable in Alpine 3.24; covered at build time by `apk upgrade`) | endoflife.date, trivy | 2026-11-14 |
-| `multicheck-frontend` published image | release image | 1.6.14 | `deploy/azure/terraform.tfvars:10` | 1.6.14 | 1.6.15 | n/a | VULN (trivy 2026-11-14: 3 HIGH in `libxslt` 1.1.43-r3, fixed in r4, published after the 1.6.14 build; a rebuild picks it up via `apk upgrade`) | trivy on GHCR image | 2026-11-14 |
-| `multicheck-backend` published image | release image | 1.6.14 (stdlib go1.27.3) | `deploy/azure/terraform.tfvars:10` | 1.6.14 | 1.6.15, built with Go 1.27.4 | n/a | OUTDATED (trivy 2026-11-14: OS 0 HIGH/CRITICAL; binary carries CVE-2026-97054, severity UNKNOWN in trivy DB) | trivy on GHCR image | 2026-11-14 |
+| `multicheck-frontend` published image | release image | 1.6.15 (deployed 2026-11-14; app stopped since 2026-11-10) | `deploy/azure/terraform.tfvars:10` | 1.6.15 | 1.6.15 | n/a | OK (trivy 2026-11-14: 0 HIGH/CRITICAL, `libxslt` 1.1.43-r4) | trivy on GHCR image | 2026-11-14 |
+| `multicheck-backend` published image | release image | 1.6.15 (stdlib go1.27.4; deployed 2026-11-14; app stopped since 2026-11-10) | `deploy/azure/terraform.tfvars:10` | 1.6.15 | 1.6.15 | n/a | OK (trivy 2026-11-14: 0 HIGH/CRITICAL/UNKNOWN) | trivy on GHCR image | 2026-11-14 |
 | Valkey | service | 9.1.3-alpine | `docker-compose.yml:13`, `deploy/azure/variables.tf:45` | 9.1.3 | 9.1 | 2031-05-19 | OK (trivy 2026-11-14: 0 HIGH/CRITICAL) | endoflife.date, GitHub releases, trivy | 2026-11-14 |
 | SvelteKit | framework | 3.2.0 | `frontend/package.json` | 3.2.0 | 3.2 | not tracked | OK | npm | 2026-11-14 |
 | Svelte | framework | 5.57.3 | `frontend/package.json` | 5.57.3 | 5 | none announced | OK | endoflife.date, npm | 2026-11-14 |
@@ -75,7 +75,7 @@ Fingerprints used by `scan-manifests.sh --check` to detect changes.
 | `deploy/azure/.terraform.lock.hcl` | `3d9063711b97` |
 | `deploy/azure/main.tf` | `d780ac1c2f0a` |
 | `deploy/azure/outputs.tf` | `24fc4a8b07d8` |
-| `deploy/azure/variables.tf` | `186696245080` |
+| `deploy/azure/variables.tf` | `e3a216264105` |
 | `deploy/azure/versions.tf` | `eccbc38fddfb` |
 | `docker-compose.yml` | `45d2a87d4daa` |
 | `frontend/Dockerfile` | `67789de5e82d` |
