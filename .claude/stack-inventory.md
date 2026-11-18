@@ -3,8 +3,8 @@
 <!-- Maintained by the stack-audit skill. Safe to edit by hand: keep the headings and the table columns. -->
 
 - Last full audit: 2026-11-06
-- Last audit: 2026-11-14 (incremental; all upstream data refreshed, cache older than 7 days; vulnerability scans rerun)
-- Commit audited: `01620a8`
+- Last audit: 2026-11-18 (incremental; no manifest changed, upstream data under 7 days reused except npm; govulncheck and npm audit rerun, image scans not rerun)
+- Commit audited: `46cbe74`
 
 ## Components
 
@@ -18,8 +18,8 @@
 | `multicheck-frontend` published image | release image | 1.6.15 (deployed 2026-11-14; app stopped since 2026-11-10) | `deploy/azure/terraform.tfvars:10` | 1.6.15 | 1.6.15 | n/a | OK (trivy 2026-11-14: 0 HIGH/CRITICAL, `libxslt` 1.1.43-r4) | trivy on GHCR image | 2026-11-14 |
 | `multicheck-backend` published image | release image | 1.6.15 (stdlib go1.27.4; deployed 2026-11-14; app stopped since 2026-11-10) | `deploy/azure/terraform.tfvars:10` | 1.6.15 | 1.6.15 | n/a | OK (trivy 2026-11-14: 0 HIGH/CRITICAL/UNKNOWN) | trivy on GHCR image | 2026-11-14 |
 | Valkey | service | 9.1.3-alpine | `docker-compose.yml:13`, `deploy/azure/variables.tf:45` | 9.1.3 | 9.1 | 2031-05-19 | OK (trivy 2026-11-14: 0 HIGH/CRITICAL) | endoflife.date, GitHub releases, trivy | 2026-11-14 |
-| SvelteKit | framework | 3.2.0 | `frontend/package.json` | 3.2.0 | 3.2 | not tracked | OK | npm | 2026-11-14 |
-| Svelte | framework | 5.57.3 | `frontend/package.json` | 5.57.3 | 5 | none announced | OK | endoflife.date, npm | 2026-11-14 |
+| SvelteKit | framework | 3.2.0 | `frontend/package.json` | 3.3.1 | 3.3 | not tracked | OUTDATED (minor) | npm | 2026-11-18 |
+| Svelte | framework | 5.57.3 | `frontend/package.json` | 5.58.0 | 5 | none announced | OUTDATED (minor) | endoflife.date, npm | 2026-11-18 |
 | Vite | build tool | 8.3.8 | `frontend/package.json` | 8.3.8 | 8.3.8 | not tracked | OK | npm | 2026-11-14 |
 | Tailwind CSS | framework | 4.3.5 | `frontend/package.json` | 4.3.5 | 4.3.5 | none announced | OK | endoflife.date, npm | 2026-11-14 |
 | TypeScript | toolchain | 6.0.3 | `frontend/package.json` | 7.0.2 | 6.0 (kit 3.2.0 still peers `^6.0.0`, typescript-eslint 8.72.2 `<6.1.0`) | not tracked | OK (accepted) | npm | 2026-11-14 |
