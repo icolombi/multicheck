@@ -2,18 +2,44 @@ server {
     listen ${NGINX_PORT};
     server_name _;
 
+    # Do not advertise the nginx version in headers and error pages.
+    server_tokens off;
+
     root /usr/share/nginx/html;
     index index.html;
 
-    # Asset immutabili di SvelteKit: hash nel nome file, cache aggressiva
+    # Static assets are precompressed at build time (adapter-static precompress):
+    # serve the .gz next to the file instead of compressing per request.
+    gzip_static on;
+    # Dynamic compression for what is not precompressed, mainly the JSON proxied
+    # from the backend. The responses carry no secrets, so BREACH-style attacks
+    # have nothing to recover.
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_min_length 1024;
+    gzip_types application/json application/javascript text/css text/plain image/svg+xml;
+
+    # SvelteKit immutable assets: hashed file names, cache aggressively.
     location /_app/immutable/ {
+        include /etc/nginx/snippets/security-headers.conf;
         add_header Cache-Control "public, max-age=31536000, immutable";
         try_files $uri =404;
     }
 
-    # Proxy verso il backend (usato solo in standalone/docker-compose;
-    # in Kubernetes il Gateway instrada /api prima di arrivare a nginx)
+    # The SPA shell references the hashed assets of the current release: it must be
+    # revalidated on every load, or a browser keeps running the previous release.
+    # The SPA fallback below redirects here internally, so client-side routes get
+    # the same header.
+    location = /index.html {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache";
+    }
+
+    # Proxy to the backend (used in standalone/docker-compose and on Azure;
+    # in Kubernetes the Gateway routes /api before the request reaches nginx).
     location /api/ {
+        include /etc/nginx/snippets/security-headers.conf;
         proxy_pass ${API_UPSTREAM}/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -21,8 +47,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # SPA fallback: ogni route client-side torna index.html
+    # SPA fallback: every client-side route returns index.html.
     location / {
+        include /etc/nginx/snippets/security-headers.conf;
         try_files $uri $uri/ /index.html;
     }
 }

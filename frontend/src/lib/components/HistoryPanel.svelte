@@ -1,6 +1,20 @@
 <script lang="ts">
 	import { History, Trash2, Globe, Network } from '@lucide/svelte';
 	import type { HistoryItem } from '#lib/types.ts';
+	import { verdictOf, verdictLabel, verdictTextClass } from '#lib/verdict.ts';
+
+	// Badge background per verdict; the text colour comes from verdictTextClass.
+	const badgeClass = {
+		listed: 'bg-destructive/20',
+		clean: 'bg-success/20',
+		incomplete: 'bg-warning/20'
+	} as const;
+
+	const borderClass = {
+		listed: 'border-destructive/50',
+		clean: 'border-success/50',
+		incomplete: 'border-warning/50'
+	} as const;
 
 	interface Props {
 		items: HistoryItem[];
@@ -34,7 +48,7 @@
 	}
 
 	function getStatusClass(item: HistoryItem): string {
-		return item.result.BlackListed ? 'border-destructive/50' : 'border-success/50';
+		return borderClass[verdictOf(item.result)];
 	}
 
 	function getTypeIcon(item: HistoryItem) {
@@ -69,14 +83,13 @@
 		<div class="space-y-2 max-h-[600px] overflow-y-auto">
 			{#each items as item (item.id)}
 				{@const Icon = getTypeIcon(item)}
+				{@const verdict = verdictOf(item.result)}
 				<button
 					onclick={() => onSelect(item)}
 					class={`w-full text-left rounded-lg border ${getStatusClass(item)} bg-card p-3 hover:bg-accent transition-colors`}
 				>
 					<div class="flex items-start gap-3">
-						<Icon
-							class={`h-5 w-5 mt-0.5 ${item.result.BlackListed ? 'text-destructive' : 'text-success'}`}
-						/>
+						<Icon class={`h-5 w-5 mt-0.5 ${verdictTextClass[verdict]}`} />
 						<div class="flex-1 min-w-0">
 							<p class="font-medium truncate">{item.value}</p>
 							<div class="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
@@ -90,9 +103,9 @@
 							</div>
 						</div>
 						<div
-							class={`text-xs font-medium px-2 py-1 rounded ${item.result.BlackListed ? 'bg-destructive/20 text-destructive' : 'bg-success/20 text-success'}`}
+							class={`text-xs font-medium px-2 py-1 rounded ${badgeClass[verdict]} ${verdictTextClass[verdict]}`}
 						>
-							{item.result.BlackListed ? 'Listed' : 'Clean'}
+							{verdict === 'listed' ? 'Listed' : verdictLabel[verdict]}
 						</div>
 					</div>
 				</button>

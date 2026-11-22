@@ -4,7 +4,8 @@
 	import ResultsCard from './ResultsCard.svelte';
 	import type { CheckType, HistoryItem, IpResponse, DomainResponse } from '#lib/types.ts';
 	import { checkIp, checkDomain, postCheckIp, postCheckDomain } from '#lib/api.ts';
-	import { ipSchema, domainSchema } from '#lib/validators.ts';
+	import { ipSchema, domainSchema, blacklistSchema, nameserverSchema } from '#lib/validators.ts';
+	import { verdictOf } from '#lib/verdict.ts';
 
 	interface Props {
 		selectedItem: HistoryItem | null;
@@ -58,21 +59,19 @@
 			return;
 		}
 
+		const blacklists = parseLines(customBlacklists);
+		const nameservers = parseLines(customNameservers);
+		const advancedError = validateAdvanced(blacklists, nameservers);
+		if (advancedError) {
+			toast.error(advancedError);
+			return;
+		}
+
 		loading = true;
 		result = null;
 
 		try {
 			let response: IpResponse | DomainResponse;
-
-			// Parse custom inputs if provided
-			const blacklists = customBlacklists
-				.split('\n')
-				.map((bl) => bl.trim())
-				.filter((bl) => bl.length > 0);
-			const nameservers = customNameservers
-				.split('\n')
-				.map((ns) => ns.trim())
-				.filter((ns) => ns.length > 0);
 
 			// Use POST endpoint if custom blacklists are provided
 			if (blacklists.length > 0) {
@@ -110,8 +109,11 @@
 			};
 			onCheckComplete(historyItem);
 
-			if (response.BlackListed) {
+			const verdict = verdictOf(response);
+			if (verdict === 'listed') {
 				toast.error('Found in blacklists!');
+			} else if (verdict === 'incomplete') {
+				toast.warning('Incomplete - some blacklists could not be checked');
 			} else {
 				toast.success('Clean - Not blacklisted');
 			}
@@ -122,6 +124,29 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	// Splits a textarea into its non-empty, trimmed lines.
+	function parseLines(value: string): string[] {
+		return value
+			.split('\n')
+			.map((line) => line.trim())
+			.filter((line) => line.length > 0);
+	}
+
+	// The custom lists were sent unvalidated: a typo only surfaced as a backend 400
+	// after a round trip. Returns the first problem, or null when both lists are valid.
+	function validateAdvanced(blacklists: string[], nameservers: string[]): string | null {
+		if (blacklists.length === 0) {
+			// Without custom blacklists the GET endpoints are used and custom
+			// nameservers would be silently ignored: say so instead.
+			return nameservers.length > 0 ? 'Custom nameservers require custom blacklists' : null;
+		}
+		const lists = blacklistSchema.safeParse(blacklists);
+		if (!lists.success) return lists.error.issues[0]?.message ?? 'Invalid blacklists';
+		const servers = nameserverSchema.safeParse(nameservers);
+		if (!servers.success) return servers.error.issues[0]?.message ?? 'Invalid nameservers';
+		return null;
 	}
 
 	function handleInputChange() {
@@ -229,7 +254,7 @@
 							<textarea
 								id="blacklists"
 								bind:value={customBlacklists}
-								placeholder="zen.spamhaus.org&#10;bl.spamcop.net"
+								placeholder="bl.spamcop.net&#10;b.barracudacentral.org"
 								rows="4"
 								class="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
 								disabled={loading}></textarea>

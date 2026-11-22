@@ -32,12 +32,24 @@ export const domainSchema = z
 		{ message: 'Invalid domain format' }
 	);
 
+// DNS zone names (e.g. bl.spamcop.net), checked the same way the backend's
+// validateBlacklists does: letters, digits and hyphens, at least one dot, no empty
+// label. Kept in sync with the backend limits (maxCustomBlacklists = 20).
+const dnsZoneRegex =
+	/^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.?$/;
+
 export const blacklistSchema = z
-	.array(z.string().min(1))
+	.array(
+		z
+			.string()
+			.max(253, 'Blacklist name too long (maximum 253 characters)')
+			.regex(dnsZoneRegex, 'Invalid blacklist name (must be a DNS zone such as bl.spamcop.net)')
+	)
 	.min(1, 'At least one blacklist is required')
 	.max(20, 'Maximum 20 blacklists allowed');
 
+// Resolvers may be IPv4 or IPv6: unlike the checked address, a nameserver is only
+// dialled, never reversed into a DNSBL query. The backend accepts both.
 export const nameserverSchema = z
-	.array(ipSchema)
-	.max(3, 'Maximum 3 nameservers allowed')
-	.optional();
+	.array(z.union([z.ipv4(), z.ipv6()], { error: 'Invalid nameserver (must be an IP address)' }))
+	.max(3, 'Maximum 3 nameservers allowed');

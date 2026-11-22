@@ -11,6 +11,7 @@
 	import { toast } from 'svelte-sonner';
 	import type { IpResponse, DomainResponse, CheckType } from '#lib/types.ts';
 	import { clearCache } from '#lib/api.ts';
+	import { verdictOf, verdictLabel, verdictTextClass } from '#lib/verdict.ts';
 
 	interface Props {
 		result: IpResponse | DomainResponse;
@@ -21,8 +22,11 @@
 
 	let clearingCache = $state(false);
 
+	const verdict = $derived(verdictOf(result));
 	// Derived icon components
-	const StatusIcon = $derived(result.BlackListed ? XCircle : CheckCircle);
+	const StatusIcon = $derived(
+		verdict === 'listed' ? XCircle : verdict === 'incomplete' ? AlertTriangle : CheckCircle
+	);
 	const ValidIcon = $derived(result.Status ? CheckCircle : AlertTriangle);
 
 	function copyToClipboard(text: string) {
@@ -61,14 +65,6 @@
 			clearingCache = false;
 		}
 	}
-
-	function getStatusColor(blacklisted: boolean): string {
-		return blacklisted ? 'text-destructive' : 'text-success';
-	}
-
-	function getStatusText(blacklisted: boolean): string {
-		return blacklisted ? 'Blacklisted' : 'Clean';
-	}
 </script>
 
 <div class="rounded-lg border border-border bg-card p-6 space-y-6">
@@ -76,9 +72,9 @@
 	<div class="flex items-start justify-between">
 		<div class="flex-1">
 			<div class="flex items-center gap-3 mb-2">
-				<StatusIcon class={`h-8 w-8 ${getStatusColor(result.BlackListed)}`} />
+				<StatusIcon class={`h-8 w-8 ${verdictTextClass[verdict]}`} />
 				<div>
-					<h3 class="text-2xl font-bold">{getStatusText(result.BlackListed)}</h3>
+					<h3 class="text-2xl font-bold">{verdictLabel[verdict]}</h3>
 					<p class="text-sm text-muted-foreground">
 						{checkType === 'ip' ? (result as IpResponse).IP : (result as DomainResponse).Domain}
 					</p>
@@ -185,7 +181,16 @@
 				{/each}
 			</div>
 		</div>
-	{:else if !result.BlackListed}
+	{:else if verdict === 'incomplete'}
+		<div class="rounded-lg border border-warning/50 bg-warning/10 p-4 text-center">
+			<AlertTriangle class="h-8 w-8 text-warning mx-auto mb-2" />
+			<p class="font-medium text-warning">Not listed on the blacklists that answered</p>
+			<p class="text-sm text-muted-foreground mt-1">
+				Some blacklists could not be checked (see the errors below), so this {checkType} cannot be declared
+				clean
+			</p>
+		</div>
+	{:else if verdict === 'clean'}
 		<div class="rounded-lg border border-success/50 bg-success/10 p-4 text-center">
 			<CheckCircle class="h-8 w-8 text-success mx-auto mb-2" />
 			<p class="font-medium text-success">Not found in any blacklists</p>
@@ -201,7 +206,7 @@
 				Errors
 			</h4>
 			<div class="space-y-2">
-				{#each result.Errors as error (error)}
+				{#each result.Errors as error, i (i)}
 					<div class="rounded-lg border border-destructive bg-destructive/10 p-3">
 						<p class="text-sm text-destructive">{error}</p>
 					</div>

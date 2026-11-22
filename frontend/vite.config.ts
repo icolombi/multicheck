@@ -12,7 +12,10 @@ export default defineConfig({
 			preprocess: vitePreprocess(),
 			// SPA: static build with client-side routing, served by nginx (see Dockerfile)
 			adapter: adapter({
-				fallback: 'index.html'
+				fallback: 'index.html',
+				// Emit .gz (and .br) next to every asset, served by nginx gzip_static:
+				// the JS and CSS shrink by about two thirds with no per-request CPU.
+				precompress: true
 			})
 		})
 	],

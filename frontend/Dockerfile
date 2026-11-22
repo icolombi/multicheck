@@ -31,6 +31,9 @@ ENV NGINX_PORT=8080 \
     API_UPSTREAM=http://127.0.0.1:8080
 
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+# Outside templates/ on purpose: it has no variables, and files there are rendered
+# into conf.d/, where the http-level include would load bare add_header lines.
+COPY nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=builder /app/build /usr/share/nginx/html
 
 EXPOSE 8080
