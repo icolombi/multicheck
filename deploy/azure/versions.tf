@@ -12,7 +12,7 @@ terraform {
     # can create both, but has no way to attach one to the other (see main.tf).
     azapi = {
       source  = "azure/azapi"
-      version = "~> 2.13"
+      version = "~> 2.14"
     }
   }
 
