@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dchest/validator"
 	"github.com/gomodule/redigo/redis"
 	"github.com/spf13/viper"
 )
@@ -46,6 +47,7 @@ func ReadConfig(c Config) (configuration Config) {
 	configuration.ipBlacklist = viper.GetStringSlice("ipBlacklist")
 	configuration.CacheControlMaxAge = viper.GetInt("cacheControlMaxAge")
 	configuration.RedisCacheTTL = viper.GetInt("redisCacheTTL")
+	configuration.RedisPartialCacheTTL = viper.GetInt("redisPartialCacheTTL")
 	configuration.MaxCustomBlacklists = viper.GetInt("maxCustomBlacklists")
 	configuration.MaxCustomNameservers = viper.GetInt("maxCustomNameservers")
 	configuration.MaxRequestBodySize = viper.GetInt64("maxRequestBodySize")
@@ -91,6 +93,13 @@ func applyConfigDefaults(c *Config) {
 	}
 	if c.RedisCacheTTL <= 0 {
 		c.RedisCacheTTL = 300
+	}
+	// A partial result must never outlive a complete one: cap it at the full TTL.
+	if c.RedisPartialCacheTTL <= 0 {
+		c.RedisPartialCacheTTL = 60
+	}
+	if c.RedisPartialCacheTTL > c.RedisCacheTTL {
+		c.RedisPartialCacheTTL = c.RedisCacheTTL
 	}
 	if c.MaxCustomBlacklists <= 0 {
 		c.MaxCustomBlacklists = 20
@@ -255,13 +264,16 @@ func bToKb(b uint64) uint64 {
 	return b / 1024
 }
 
-// dnsblSentinelCodes are replies that do not mean "listed".
+// dnsblSentinelCodes are replies that do not mean "listed": they mean the DNSBL
+// did not answer the question at all.
 //
-// 127.0.0.1 and 127.255.255.255 are long-standing false positives. The
-// 127.255.255.252-254 range is how Spamhaus (and others) signal that the query
-// itself was refused — typically because the resolver is a public one, or is over
-// its query quota. Counting those as a listing produces confident false positives
-// exactly when the service is being rate limited.
+// The 127.255.255.252-255 range is how Spamhaus (and others) signal that the query
+// was refused: typing error in the zone name, public resolver, or over quota.
+// 127.0.0.1 is URIBL's "query blocked" reply, returned even for its own test
+// entry when the resolver is a public one. These two (127.0.0.1, 127.255.255.255)
+// used to be dropped silently as "false positives", so a blocked resolver made
+// every name look clean. Counting any of them as a listing would be just as wrong:
+// it produces confident false positives exactly when the service is rate limited.
 var dnsblSentinelCodes = []string{
 	"127.0.0.1",
 	"127.255.255.252",
@@ -294,17 +306,11 @@ func removeIPFromSlice(slice []net.IP) (result []net.IP, sentinels []net.IP) {
 	return result, sentinels
 }
 
-// isQueryRefused reports whether the sentinel replies indicate the DNSBL rejected
-// the query (as opposed to the harmless 127.0.0.1 / 127.255.255.255 noise).
+// isQueryRefused reports whether the DNSBL answered with a sentinel instead of a
+// verdict. Every sentinel counts: see dnsblSentinelCodes for why none of them is
+// harmless noise.
 func isQueryRefused(sentinels []net.IP) bool {
-	for _, ip := range sentinels {
-		if ip.Equal(net.ParseIP("127.255.255.252")) ||
-			ip.Equal(net.ParseIP("127.255.255.253")) ||
-			ip.Equal(net.ParseIP("127.255.255.254")) {
-			return true
-		}
-	}
-	return false
+	return len(sentinels) > 0
 }
 
 // Validates a list of nameservers (must be valid IPs)
@@ -481,7 +487,7 @@ func checkIPDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, reverseIP 
 	// A refused query is reported as an error rather than being silently dropped:
 	// the result for this blacklist is unknown, not "clean".
 	if isQueryRefused(sentinels) {
-		error = fmt.Sprintf("%s refused the query (resolver blocked or over quota)", blacklist)
+		error = fmt.Sprintf("%s refused the query with %s (resolver blocked or over quota)", blacklist, sentinels[0])
 	}
 	if len(value) != 0 {
 		//fmt.Print("Blacklisted A: ")
@@ -589,7 +595,7 @@ func checkDomainDNS(wg *sync.WaitGroup, mu *sync.Mutex, blacklist string, domain
 	// A refused query is reported as an error rather than being silently dropped:
 	// the result for this blacklist is unknown, not "clean".
 	if isQueryRefused(sentinels) {
-		error = fmt.Sprintf("%s refused the query (resolver blocked or over quota)", blacklist)
+		error = fmt.Sprintf("%s refused the query with %s (resolver blocked or over quota)", blacklist, sentinels[0])
 	}
 
 	if len(value) != 0 {
@@ -645,8 +651,8 @@ func getRedisKey(key string) (reply string, err error) {
 	return reply, err
 }
 
-// setRedisKey set a key to Redis with its expiration
-func setRedisKey(key string, value string) error {
+// setRedisKey set a key to Redis with its expiration, in seconds
+func setRedisKey(key string, value string, ttl int) error {
 
 	conn := c.Get()
 	defer conn.Close()
@@ -654,9 +660,127 @@ func setRedisKey(key string, value string) error {
 	// SET ... EX writes the value and its TTL in a single atomic command: the
 	// previous SET + EXPIRE pipeline could leave a key without expiration and
 	// discarded the error returned by SET.
-	_, err := conn.Do("SET", key, value, "EX", configuration.RedisCacheTTL)
+	_, err := conn.Do("SET", key, value, "EX", ttl)
 
 	return err
+}
+
+// cacheTTLFor picks how long a check result may stay in Redis.
+//
+// A result with DNS errors (timeout, refused query) is incomplete, so it gets the
+// short redisPartialCacheTTL instead of the full one: never caching it meant that a
+// blacklist refusing every query (as Spamhaus does with public resolvers) disabled
+// the cache entirely and turned every request into a full DNS fan-out.
+func cacheTTLFor(checkErrors []string) int {
+	if len(checkErrors) > 0 {
+		return configuration.RedisPartialCacheTTL
+	}
+	return configuration.RedisCacheTTL
+}
+
+// Cache key namespaces of the GET endpoints.
+//
+// GET keys used to be the bare IP or domain. "1.2.3.4" is also a syntactically
+// valid domain name, so GET /domain/1.2.3.4 cached a result computed against the
+// domain blacklists under the very key GET /ip/1.2.3.4 then served as the IP's
+// verdict: any anonymous client could make a listed IP look clean for a whole TTL.
+const (
+	ipCacheKeyPrefix     = "ip:"
+	domainCacheKeyPrefix = "domain:"
+)
+
+// ipCacheKey returns the Redis key of a GET /ip/{ip} result.
+func ipCacheKey(ipAddress string) string {
+	return ipCacheKeyPrefix + ipAddress
+}
+
+// domainCacheKey returns the Redis key of a GET /domain/{domain} result.
+func domainCacheKey(domainName string) string {
+	return domainCacheKeyPrefix + domainName
+}
+
+// normalizeDomain returns the canonical form of a domain name: DNS names are
+// case-insensitive and the trailing root dot is optional, so "Example.COM." and
+// "example.com" must share a cache key and build the same query. Without this the
+// trailing dot also produced an invalid "example.com..zone." query name.
+func normalizeDomain(domainName string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domainName), "."))
+}
+
+// normalizeBlacklists canonicalises the caller-supplied DNSBL zones and drops
+// duplicates, so the query, the validation and the cache-key hash all see the same
+// values. Entries used to be validated after a trim but queried untrimmed.
+// Empty entries are kept on purpose: validateBlacklists must still reject them.
+func normalizeBlacklists(blacklists []string) []string {
+	seen := make(map[string]bool, len(blacklists))
+	normalized := make([]string, 0, len(blacklists))
+	for _, bl := range blacklists {
+		zone := normalizeDomain(bl)
+		if zone != "" && seen[zone] {
+			continue
+		}
+		seen[zone] = true
+		normalized = append(normalized, zone)
+	}
+	return normalized
+}
+
+// normalizeNameservers trims the caller-supplied resolver addresses: they used to
+// be validated trimmed but dialled as-is, so " 8.8.8.8" passed validation and then
+// failed every lookup.
+func normalizeNameservers(nameservers []string) []string {
+	normalized := make([]string, len(nameservers))
+	for i, ns := range nameservers {
+		normalized[i] = strings.TrimSpace(ns)
+	}
+	return normalized
+}
+
+// isCheckableDomain reports whether a (normalized) name can be checked against
+// the domain blacklists.
+//
+// validator.IsValidDomain also accepts dotted-quad IPv4 addresses and other names
+// whose top-level label is all digits, which no real TLD is (RFC 3696 section 2).
+// Rejecting them keeps IP addresses out of the domain endpoints entirely.
+func isCheckableDomain(domainName string) bool {
+	if !validator.IsValidDomain(domainName) {
+		return false
+	}
+	labels := strings.Split(domainName, ".")
+	tld := labels[len(labels)-1]
+	return strings.Trim(tld, "0123456789") != ""
+}
+
+// resolveCacheKey maps a key received by DELETE /clear-cache to the Redis key to
+// delete, and reports whether it is one this service could have written.
+//
+// The endpoint is unauthenticated and deletes by exact key, so without this check
+// any client could delete arbitrary entries from a Redis database that may be
+// shared with other applications. Accepted forms are the CacheKey values returned
+// by the API (ip:, domain:, post:ip:, post:domain:) and, for compatibility with
+// clients written before the GET keys gained a namespace, a bare IPv4 address or
+// domain name, which is mapped to its namespaced key.
+func resolveCacheKey(key string) (redisKey string, ok bool) {
+	// The longest key this service writes: "post:domain:" + name + ":" + 16-char hash.
+	maxKeyLength := len("post:domain:") + configuration.MaxStringLength + 1 + 16
+	if key == "" || len(key) > maxKeyLength {
+		return "", false
+	}
+	switch {
+	case strings.HasPrefix(key, "post:ip:"), strings.HasPrefix(key, "post:domain:"):
+		return key, true
+	case strings.HasPrefix(key, ipCacheKeyPrefix):
+		return key, isIPv4(strings.TrimPrefix(key, ipCacheKeyPrefix))
+	case strings.HasPrefix(key, domainCacheKeyPrefix):
+		return key, isCheckableDomain(strings.TrimPrefix(key, domainCacheKeyPrefix))
+	case len(key) > configuration.MaxStringLength:
+		return "", false
+	case isIPv4(key):
+		return ipCacheKey(key), true
+	case isCheckableDomain(normalizeDomain(key)):
+		return domainCacheKey(normalizeDomain(key)), true
+	}
+	return "", false
 }
 
 // delRedisKey delete a key from Redis

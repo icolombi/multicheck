@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dchest/validator"
 	"github.com/gomodule/redigo/redis"
 	"github.com/gorilla/mux"
 )
@@ -54,6 +53,7 @@ type Config struct {
 	ipBlacklist           []string
 	CacheControlMaxAge    int
 	RedisCacheTTL         int
+	RedisPartialCacheTTL  int // TTL of a result whose DNS fan-out reported errors
 	MaxCustomBlacklists   int
 	MaxCustomNameservers  int
 	MaxRequestBodySize    int64
@@ -298,6 +298,21 @@ func invalidIPMessage(ipAddress string) string {
 	return "invalid IP address format"
 }
 
+// invalidDomainMessage explains why a domain was rejected, pointing an IPv4
+// address to the endpoint that can actually check it.
+func invalidDomainMessage(domainName string) string {
+	if isIPv4(domainName) {
+		return "IP addresses cannot be checked as domains: use the IP endpoints"
+	}
+	return "invalid domain format"
+}
+
+// noBlacklistsMessage explains a 503 from a GET endpoint whose default blacklist
+// is empty, pointing to the POST endpoint that still works with a custom list.
+func noBlacklistsMessage(kind string) string {
+	return fmt.Sprintf("no %s blacklists configured on this server: use POST /%s/check with a custom blacklist", kind, strings.ToLower(kind))
+}
+
 // clientIPFrom returns the address to attribute the request to.
 //
 // r.RemoteAddr is the proxy when the service runs behind nginx, but blindly
@@ -336,7 +351,7 @@ func RootHandler(w http.ResponseWriter, r *http.Request) {
 	clientIP := clientIPFrom(r)
 
 	var endpointsList []string
-	endpointsList = append(endpointsList, "GET /ip/<ip>", "GET /domain/<domain>", "POST /ip/check", "POST /domain/check", "GET /health", "GET /clear-cache/<object-name>")
+	endpointsList = append(endpointsList, "GET /ip/<ip>", "GET /domain/<domain>", "POST /ip/check", "POST /domain/check", "GET /health", "DELETE /clear-cache/<cache-key>")
 
 	// Built per request: a package-level variable would be written concurrently
 	// by simultaneous clients.
@@ -405,7 +420,8 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	ip.Status = true
 	ip.BlackListed = false
 	ip.BlackList = nil
-	ipAddress := params["ip"]
+	ipAddress := strings.TrimSpace(params["ip"])
+	cacheKey := ipCacheKey(ipAddress)
 
 	// Validate IP length
 	if len(ipAddress) > configuration.MaxStringLength {
@@ -421,15 +437,30 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	} else if isIPv4(ipAddress) {
 		ip.ValidIP = true
 
+		// With no IP blacklist configured the fan-out would query nothing and
+		// answer a confident "not blacklisted": refuse instead.
+		if len(configuration.ipBlacklist) == 0 {
+			errors = append(errors, noBlacklistsMessage("IP"))
+			elapsed := time.Since(start).Seconds()
+			ip = Ip{TimeTaken: elapsed, IP: ipAddress, ValidIP: true, Status: false, Errors: errors}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(ip)
+			logRequest("GET", http.StatusServiceUnavailable, "/ip", ipAddress, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+			return
+		}
+
 		// Look for it in Redis cache. Skipped entirely when Redis is down.
 		if redisAvailable {
-			if value, cacheErr := getRedisKey(ipAddress); cacheErr == nil {
+			if value, cacheErr := getRedisKey(cacheKey); cacheErr == nil {
 				// If the cached entry is corrupted, fall through to a fresh DNS
 				// check rather than serving malformed data.
 				if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr != nil {
 					errors = append(errors, "cache entry corrupted, re-checking DNS")
 				} else {
 					ip.Cached = true
+					// A cached partial result carries its DNS errors: keep them, so
+					// the client still sees the verdict as incomplete.
+					errors = append(errors, ip.Errors...)
 				}
 			}
 		}
@@ -448,30 +479,30 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 		ip.Status = false
 		errors = append(errors, invalidIPMessage(ipAddress))
 		elapsed := time.Since(start).Seconds()
-		ip = Ip{TimeTaken: elapsed, IP: params["ip"], ValidIP: false, Status: false, Errors: errors}
+		ip = Ip{TimeTaken: elapsed, IP: ipAddress, ValidIP: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(ip)
-		logRequest("GET", http.StatusBadRequest, "/ip", params["ip"], "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("GET", http.StatusBadRequest, "/ip", ipAddress, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 	elapsed := time.Since(start).Seconds()
-	ip = Ip{TimeTaken: elapsed, IP: params["ip"],
+	ip = Ip{TimeTaken: elapsed, IP: ipAddress,
 		Cached:      ip.Cached,
 		ValidIP:     ip.ValidIP,
 		BlackListed: ip.BlackListed,
 		BlackList:   ip.BlackList,
 		Status:      ip.Status,
-		CacheKey:    ipAddress,
+		CacheKey:    cacheKey,
 		Errors:      errors}
-	//fmt.Println(json.Marshal(ip))
-	// Save to Redis only for a valid IP whose check completed without errors:
-	// caching a partial result would serve it for the whole TTL.
-	if !ip.Cached && ip.ValidIP && redisAvailable && len(checkErrors) == 0 {
-		value, _ := json.Marshal(ip)
-		valueStr := string(value)
-		err := setRedisKey(ipAddress, valueStr)
-		if err != nil {
-			errors = append(errors, string(err.Error()))
+	// Save a fresh result to Redis. Only the DNS errors are stored with it (not the
+	// Redis ones, which describe this request), and a partial result gets the short
+	// TTL: see cacheTTLFor.
+	if !ip.Cached && ip.ValidIP && redisAvailable {
+		toCache := ip
+		toCache.Errors = checkErrors
+		value, _ := json.Marshal(toCache)
+		if err := setRedisKey(cacheKey, string(value), cacheTTLFor(checkErrors)); err != nil {
+			errors = append(errors, "cache save error: "+err.Error())
 		}
 	}
 
@@ -479,7 +510,7 @@ func GetIp(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ip)
 
 	// Log
-	logRequest("GET", http.StatusOK, "/ip", params["ip"], "", errors, elapsed, ip.Cached, clientIP, redisAvailable, redisConnections)
+	logRequest("GET", http.StatusOK, "/ip", ipAddress, "", errors, elapsed, ip.Cached, clientIP, redisAvailable, redisConnections)
 }
 
 // Function to get domain information
@@ -505,7 +536,8 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	domain.Status = true
 	domain.BlackListed = false
 	domain.BlackList = nil
-	domainName := params["domain"]
+	domainName := normalizeDomain(params["domain"])
+	cacheKey := domainCacheKey(domainName)
 
 	// Validate domain length
 	if len(domainName) > configuration.MaxStringLength {
@@ -518,18 +550,35 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(domain)
 		logRequest("GET", http.StatusBadRequest, "/domain", domainName, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
-	} else if validator.IsValidDomain(params["domain"]) {
+	} else if isCheckableDomain(domainName) {
 		domain.ValidDomain = true
+
+		// With no domain blacklist configured the fan-out would query nothing and
+		// answer a confident "not blacklisted": refuse instead. The shipped
+		// configuration is in this state until a resolver accepted by the domain
+		// blacklists is available (see config.toml).
+		if len(configuration.domainBlacklist) == 0 {
+			errors = append(errors, noBlacklistsMessage("domain"))
+			elapsed := time.Since(start).Seconds()
+			domain = Domain{TimeTaken: elapsed, Domain: domainName, ValidDomain: true, Status: false, Errors: errors}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(domain)
+			logRequest("GET", http.StatusServiceUnavailable, "/domain", domainName, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+			return
+		}
 
 		// Look for it in Redis cache. Skipped entirely when Redis is down.
 		if redisAvailable {
-			if value, cacheErr := getRedisKey(domainName); cacheErr == nil {
+			if value, cacheErr := getRedisKey(cacheKey); cacheErr == nil {
 				// If the cached entry is corrupted, fall through to a fresh DNS
 				// check rather than serving malformed data.
 				if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr != nil {
 					errors = append(errors, "cache entry corrupted, re-checking DNS")
 				} else {
 					domain.Cached = true
+					// A cached partial result carries its DNS errors: keep them, so
+					// the client still sees the verdict as incomplete.
+					errors = append(errors, domain.Errors...)
 				}
 			}
 		}
@@ -545,38 +594,41 @@ func GetDomain(w http.ResponseWriter, r *http.Request) {
 	} else {
 		domain.ValidDomain = false
 		domain.Status = false
+		// The 400 used to carry an empty Errors list, leaving the client to guess.
+		errors = append(errors, invalidDomainMessage(domainName))
 		elapsed := time.Since(start).Seconds()
-		domain = Domain{TimeTaken: elapsed, Domain: params["domain"], ValidDomain: false, Status: false, Errors: errors}
+		domain = Domain{TimeTaken: elapsed, Domain: domainName, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(domain)
-		logRequest("GET", http.StatusBadRequest, "/domain", params["domain"], "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
+		logRequest("GET", http.StatusBadRequest, "/domain", domainName, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
 
 	elapsed := time.Since(start).Seconds()
-	domain = Domain{TimeTaken: elapsed, Domain: params["domain"],
+	domain = Domain{TimeTaken: elapsed, Domain: domainName,
 		Cached:      domain.Cached,
 		ValidDomain: domain.ValidDomain,
 		BlackListed: domain.BlackListed,
 		BlackList:   domain.BlackList,
 		Status:      domain.Status,
-		CacheKey:    domainName,
+		CacheKey:    cacheKey,
 		Errors:      errors}
 
-	// Save to Redis only for a valid domain whose check completed without errors:
-	// caching a partial result would serve it for the whole TTL.
-	if !domain.Cached && domain.ValidDomain && redisAvailable && len(checkErrors) == 0 {
-		value, _ := json.Marshal(domain)
-		valueStr := string(value)
-		err := setRedisKey(domainName, valueStr)
-		if err != nil {
-			errors = append(errors, string(err.Error()))
+	// Save a fresh result to Redis. Only the DNS errors are stored with it (not the
+	// Redis ones, which describe this request), and a partial result gets the short
+	// TTL: see cacheTTLFor.
+	if !domain.Cached && domain.ValidDomain && redisAvailable {
+		toCache := domain
+		toCache.Errors = checkErrors
+		value, _ := json.Marshal(toCache)
+		if err := setRedisKey(cacheKey, string(value), cacheTTLFor(checkErrors)); err != nil {
+			errors = append(errors, "cache save error: "+err.Error())
 		}
 	}
 	setCacheControl(w)
 	json.NewEncoder(w).Encode(domain)
 	// Log
-	logRequest("GET", http.StatusOK, "/domain", params["domain"], "", errors, elapsed, domain.Cached, clientIP, redisAvailable, redisConnections)
+	logRequest("GET", http.StatusOK, "/domain", domainName, "", errors, elapsed, domain.Cached, clientIP, redisAvailable, redisConnections)
 }
 
 // POST handler to check IP against custom blacklists
@@ -633,6 +685,12 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		logRequest("POST", http.StatusBadRequest, "/ip/check", req.IP, "", errors, elapsed, false, clientIP, redisAvailable, redisConnections)
 		return
 	}
+
+	// Normalize before validating, so the values validated are exactly the ones
+	// queried and hashed into the cache key.
+	req.IP = strings.TrimSpace(req.IP)
+	req.Blacklists = normalizeBlacklists(req.Blacklists)
+	req.Nameservers = normalizeNameservers(req.Nameservers)
 
 	// Validate IP length
 	if len(req.IP) > configuration.MaxStringLength {
@@ -699,6 +757,9 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 			if unmarshalErr := json.Unmarshal([]byte(value), &ip); unmarshalErr == nil {
 				ip.Cached = true
 				ip.CacheKey = cacheKey
+				// Report this request's errors (Redis) along with the cached DNS
+				// errors of a partial result, instead of the latter only.
+				ip.Errors = append(errors, ip.Errors...)
 				elapsed := time.Since(start).Seconds()
 				ip.TimeTaken = elapsed
 				json.NewEncoder(w).Encode(ip)
@@ -746,12 +807,13 @@ func PostCheckIp(w http.ResponseWriter, r *http.Request) {
 		Errors:      errors,
 	}
 
-	// Save to cache only when the check completed without errors: caching a
-	// partial result would serve it for the whole TTL.
-	if redisAvailable && len(checkErrors) == 0 {
-		valueToCache, _ := json.Marshal(ip)
-		valueStr := string(valueToCache)
-		if err = setRedisKey(cacheKey, valueStr); err != nil {
+	// Save to cache. Only the DNS errors are stored with the result, and a partial
+	// result gets the short TTL: see cacheTTLFor.
+	if redisAvailable {
+		toCache := ip
+		toCache.Errors = checkErrors
+		valueToCache, _ := json.Marshal(toCache)
+		if err = setRedisKey(cacheKey, string(valueToCache), cacheTTLFor(checkErrors)); err != nil {
 			ip.Errors = append(ip.Errors, "cache save error: "+err.Error())
 		}
 	}
@@ -815,6 +877,12 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize before validating, so the values validated are exactly the ones
+	// queried and hashed into the cache key.
+	req.Domain = normalizeDomain(req.Domain)
+	req.Blacklists = normalizeBlacklists(req.Blacklists)
+	req.Nameservers = normalizeNameservers(req.Nameservers)
+
 	// Validate domain length
 	if len(req.Domain) > configuration.MaxStringLength {
 		domain.ValidDomain = false
@@ -829,10 +897,10 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate domain
-	if !validator.IsValidDomain(req.Domain) {
+	if !isCheckableDomain(req.Domain) {
 		domain.ValidDomain = false
 		domain.Status = false
-		errors = append(errors, "invalid domain format")
+		errors = append(errors, invalidDomainMessage(req.Domain))
 		elapsed := time.Since(start).Seconds()
 		domain = Domain{TimeTaken: elapsed, Domain: req.Domain, ValidDomain: false, Status: false, Errors: errors}
 		w.WriteHeader(http.StatusBadRequest)
@@ -879,6 +947,9 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 			if unmarshalErr := json.Unmarshal([]byte(value), &domain); unmarshalErr == nil {
 				domain.Cached = true
 				domain.CacheKey = cacheKey
+				// Report this request's errors (Redis) along with the cached DNS
+				// errors of a partial result, instead of the latter only.
+				domain.Errors = append(errors, domain.Errors...)
 				elapsed := time.Since(start).Seconds()
 				domain.TimeTaken = elapsed
 				json.NewEncoder(w).Encode(domain)
@@ -926,12 +997,13 @@ func PostCheckDomain(w http.ResponseWriter, r *http.Request) {
 		Errors:      errors,
 	}
 
-	// Save to cache only when the check completed without errors: caching a
-	// partial result would serve it for the whole TTL.
-	if redisAvailable && len(checkErrors) == 0 {
-		valueToCache, _ := json.Marshal(domain)
-		valueStr := string(valueToCache)
-		if err = setRedisKey(cacheKey, valueStr); err != nil {
+	// Save to cache. Only the DNS errors are stored with the result, and a partial
+	// result gets the short TTL: see cacheTTLFor.
+	if redisAvailable {
+		toCache := domain
+		toCache.Errors = checkErrors
+		valueToCache, _ := json.Marshal(toCache)
+		if err = setRedisKey(cacheKey, string(valueToCache), cacheTTLFor(checkErrors)); err != nil {
 			domain.Errors = append(domain.Errors, "cache save error: "+err.Error())
 		}
 	}
@@ -981,22 +1053,6 @@ func logRequest(httpMethod string, httpStatusCode int, method string, param stri
 	fmt.Println(string(u))
 }
 
-// isOwnCacheKey reports whether a key is one this service could have written.
-//
-// The endpoint is unauthenticated and deletes by exact key, so without this check
-// any client could delete arbitrary entries from a Redis database that may be
-// shared with other applications. GET-endpoint keys are the bare IP or domain;
-// POST-endpoint keys carry the prefix built by buildPostCacheKey.
-func isOwnCacheKey(key string) bool {
-	if strings.HasPrefix(key, "post:ip:") || strings.HasPrefix(key, "post:domain:") {
-		return true
-	}
-	if len(key) > configuration.MaxStringLength {
-		return false
-	}
-	return isIPv4(key) || validator.IsValidDomain(key)
-}
-
 // Clear cache
 func DelCache(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1010,11 +1066,12 @@ func DelCache(w http.ResponseWriter, r *http.Request) {
 		errors = append(errors, redisErrorMsg)
 	}
 	params := mux.Vars(r)
-	key := params["key"]
+	key, isOwnKey := resolveCacheKey(params["key"])
 
 	// Reject anything this service could not have written, before touching Redis.
-	if !isOwnCacheKey(key) {
-		errors = append(errors, "invalid cache key: must be an IPv4 address, a domain name, or a post:ip:/post:domain: key")
+	if !isOwnKey {
+		key = params["key"]
+		errors = append(errors, "invalid cache key: must be a CacheKey returned by this API (ip:, domain:, post:ip:, post:domain:), an IPv4 address or a domain name")
 		elapsed := time.Since(start).Seconds()
 		clearCache = ClearCache{TimeTaken: elapsed, Key: key, Errors: errors, Status: false}
 		w.WriteHeader(http.StatusBadRequest)

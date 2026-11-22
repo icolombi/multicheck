@@ -8,9 +8,9 @@ curl -X POST http://localhost:8080/ip/check \
   -d '{
     "ip": "1.2.3.4",
     "blacklists": [
-      "zen.spamhaus.org",
+      "b.barracudacentral.org",
       "bl.spamcop.net",
-      "cbl.abuseat.org"
+      "bl.mailspike.net"
     ]
   }' | jq
 
@@ -19,7 +19,7 @@ curl -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
   -d '{
     "ip": "invalid-ip",
-    "blacklists": ["zen.spamhaus.org"]
+    "blacklists": ["bl.spamcop.net"]
   }' | jq
 
 echo -e "\n=== POST /ip/check - Too many blacklists (exceeds limit) ==="
@@ -42,7 +42,7 @@ curl -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
   -d '{
     "ip": "1.2.3.4",
-    "blacklists": ["AAAA", "zen.spamhaus.org"]
+    "blacklists": ["AAAA", "bl.spamcop.net"]
   }' | jq
 
 echo -e "\n=== POST /ip/check - Empty blacklist array ==="
@@ -59,7 +59,6 @@ curl -X POST http://localhost:8080/domain/check \
   -d '{
     "domain": "example.com",
     "blacklists": [
-      "dbl.spamhaus.org",
       "multi.uribl.com"
     ]
   }' | jq
@@ -69,7 +68,7 @@ curl -X POST http://localhost:8080/domain/check \
   -H "Content-Type: application/json" \
   -d '{
     "domain": "invalid domain!",
-    "blacklists": ["dbl.spamhaus.org"]
+    "blacklists": ["multi.uribl.com"]
   }' | jq
 
 echo -e "\n=== POST /domain/check - Invalid blacklist with consecutive dots ==="
@@ -85,6 +84,6 @@ curl -X POST http://localhost:8080/domain/check \
   -H "Content-Type: application/json" \
   -d '{
     "domain": "example.com",
-    "blacklists": ["dbl.spamhaus.org"],
+    "blacklists": ["multi.uribl.com"],
     "extraField": "not-allowed"
   }' | jq

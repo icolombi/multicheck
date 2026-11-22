@@ -156,8 +156,10 @@ func TestClearCacheAcceptsOwnKeyFormats(t *testing.T) {
 		name string
 		key  string
 	}{
-		{"GET-endpoint IP key", "1.2.3.4"},
-		{"GET-endpoint domain key", "example.com"},
+		{"GET-endpoint IP key", "ip:1.2.3.4"},
+		{"GET-endpoint domain key", "domain:example.com"},
+		{"bare IP (pre-1.6.16 clients)", "1.2.3.4"},
+		{"bare domain (pre-1.6.16 clients)", "example.com"},
 		{"POST-endpoint IP key", "post:ip:1.2.3.4:abcdef0123456789"},
 		{"POST-endpoint domain key", "post:domain:example.com:abcdef0123456789"},
 	}
@@ -205,28 +207,93 @@ func TestClearCacheReportsRedisUnavailable(t *testing.T) {
 	}
 }
 
-func TestIsOwnCacheKey(t *testing.T) {
+func TestResolveCacheKey(t *testing.T) {
 	tests := []struct {
-		name string
-		key  string
-		want bool
+		name    string
+		key     string
+		wantKey string
+		wantOK  bool
 	}{
-		{"IPv4", "1.2.3.4", true},
-		{"domain", "example.com", true},
-		{"post IP prefix", "post:ip:1.2.3.4:0123456789abcdef", true},
-		{"post domain prefix", "post:domain:example.com:0123456789abcdef", true},
-		{"foreign key", "session:abc", false},
-		{"wildcard", "*", false},
-		{"empty", "", false},
-		{"over the length limit", strings.Repeat("a", 300) + ".com", false},
+		{"namespaced IP", "ip:1.2.3.4", "ip:1.2.3.4", true},
+		{"namespaced domain", "domain:example.com", "domain:example.com", true},
+		{"bare IPv4 maps to the IP namespace", "1.2.3.4", "ip:1.2.3.4", true},
+		{"bare domain maps to the domain namespace", "Example.COM", "domain:example.com", true},
+		{"post IP prefix", "post:ip:1.2.3.4:0123456789abcdef", "post:ip:1.2.3.4:0123456789abcdef", true},
+		{"post domain prefix", "post:domain:example.com:0123456789abcdef", "post:domain:example.com:0123456789abcdef", true},
+		{"ip namespace with a domain", "ip:example.com", "", false},
+		{"domain namespace with an IP", "domain:1.2.3.4", "", false},
+		{"foreign key", "session:abc", "", false},
+		{"wildcard", "*", "", false},
+		{"empty", "", "", false},
+		{"over the length limit", strings.Repeat("a", 300) + ".com", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isOwnCacheKey(tt.key); got != tt.want {
-				t.Errorf("isOwnCacheKey(%q) = %v, want %v", tt.key, got, tt.want)
+			gotKey, gotOK := resolveCacheKey(tt.key)
+			if gotOK != tt.wantOK || (tt.wantOK && gotKey != tt.wantKey) {
+				t.Errorf("resolveCacheKey(%q) = (%q, %v), want (%q, %v)", tt.key, gotKey, gotOK, tt.wantKey, tt.wantOK)
 			}
 		})
+	}
+}
+
+// TestDomainEndpointsRejectIPv4 covers the cache poisoning path: an IPv4 address
+// is a syntactically valid domain name, and checking it as one used to write a
+// domain-list verdict that the IP endpoint then served.
+func TestDomainEndpointsRejectIPv4(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   []byte
+	}{
+		{"GET", http.MethodGet, "/domain/1.2.3.4", nil},
+		{"POST", http.MethodPost, "/domain/check", []byte(`{"domain":"1.2.3.4","blacklists":["multi.uribl.com"]}`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doRequest(t, tt.method, tt.target, tt.body)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+			var domain Domain
+			if err := json.Unmarshal(rec.Body.Bytes(), &domain); err != nil {
+				t.Fatalf("cannot decode response: %v", err)
+			}
+			if !containsSubstring(domain.Errors, "IP endpoints") {
+				t.Errorf("Errors = %v, want a pointer to the IP endpoints", domain.Errors)
+			}
+		})
+	}
+}
+
+// TestGetDomainInvalidReportsReason covers the 400 that came with an empty Errors list.
+func TestGetDomainInvalidReportsReason(t *testing.T) {
+	rec := doRequest(t, http.MethodGet, "/domain/not_a_domain", nil)
+
+	var domain Domain
+	if err := json.Unmarshal(rec.Body.Bytes(), &domain); err != nil {
+		t.Fatalf("cannot decode response: %v", err)
+	}
+	if len(domain.Errors) == 0 {
+		t.Error("Errors is empty on a rejected domain")
+	}
+}
+
+func TestRootListsClearCacheAsDelete(t *testing.T) {
+	rec := doRequest(t, http.MethodGet, "/", nil)
+
+	var root Root
+	if err := json.Unmarshal(rec.Body.Bytes(), &root); err != nil {
+		t.Fatalf("cannot decode response: %v", err)
+	}
+	for _, endpoint := range root.EndPoints {
+		if strings.Contains(endpoint, "clear-cache") && !strings.HasPrefix(endpoint, "DELETE ") {
+			t.Errorf("endpoint list advertises %q, want DELETE", endpoint)
+		}
 	}
 }
 
@@ -320,4 +387,39 @@ func containsSubstring(values []string, substring string) bool {
 		}
 	}
 	return false
+}
+
+// TestGetWithEmptyBlacklistAnswers503 covers a GET endpoint with no default
+// blacklist: the fan-out queried nothing and answered a confident "not listed".
+func TestGetWithEmptyBlacklistAnswers503(t *testing.T) {
+	originalIP, originalDomain := configuration.ipBlacklist, configuration.domainBlacklist
+	defer func() { configuration.ipBlacklist, configuration.domainBlacklist = originalIP, originalDomain }()
+	configuration.ipBlacklist, configuration.domainBlacklist = nil, nil
+
+	for _, target := range []string{"/ip/1.2.3.4", "/domain/example.com"} {
+		t.Run(target, func(t *testing.T) {
+			rec := doRequest(t, http.MethodGet, target, nil)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+			}
+			if header := rec.Header().Get("Cache-Control"); header != "" {
+				t.Errorf("Cache-Control = %q on a 503, want it unset", header)
+			}
+			var body struct {
+				BlackListed bool
+				Status      bool
+				Errors      []string
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("cannot decode response: %v", err)
+			}
+			if body.BlackListed || body.Status {
+				t.Errorf("BlackListed=%v Status=%v, want both false", body.BlackListed, body.Status)
+			}
+			if !containsSubstring(body.Errors, "no ") || !containsSubstring(body.Errors, "/check") {
+				t.Errorf("Errors = %v, want a pointer to the POST endpoint", body.Errors)
+			}
+		})
+	}
 }

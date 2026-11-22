@@ -18,10 +18,10 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}Test 1: GET /ip/{ip} - Cache Key${NC}"
 RESPONSE=$(curl -s http://localhost:8080/ip/1.1.1.1)
 CACHE_KEY=$(echo $RESPONSE | jq -r '.CacheKey')
-if [ "$CACHE_KEY" == "1.1.1.1" ]; then
+if [ "$CACHE_KEY" == "ip:1.1.1.1" ]; then
     echo -e "${GREEN}✓ PASS${NC} - CacheKey for GET IP: $CACHE_KEY"
 else
-    echo -e "${RED}✗ FAIL${NC} - Expected '1.1.1.1', got: $CACHE_KEY"
+    echo -e "${RED}✗ FAIL${NC} - Expected 'ip:1.1.1.1', got: $CACHE_KEY"
 fi
 echo
 
@@ -29,10 +29,10 @@ echo
 echo -e "${BLUE}Test 2: GET /domain/{domain} - Cache Key${NC}"
 RESPONSE=$(curl -s http://localhost:8080/domain/example.com)
 CACHE_KEY=$(echo $RESPONSE | jq -r '.CacheKey')
-if [ "$CACHE_KEY" == "example.com" ]; then
+if [ "$CACHE_KEY" == "domain:example.com" ]; then
     echo -e "${GREEN}✓ PASS${NC} - CacheKey for GET Domain: $CACHE_KEY"
 else
-    echo -e "${RED}✗ FAIL${NC} - Expected 'example.com', got: $CACHE_KEY"
+    echo -e "${RED}✗ FAIL${NC} - Expected 'domain:example.com', got: $CACHE_KEY"
 fi
 echo
 
@@ -40,7 +40,7 @@ echo
 echo -e "${BLUE}Test 3: POST /ip/check - Cache Key with Custom Blacklists${NC}"
 RESPONSE=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"8.8.8.8","blacklists":["zen.spamhaus.org","bl.spamcop.net"]}')
+  -d '{"ip":"8.8.8.8","blacklists":["bl.spamcop.net","b.barracudacentral.org"]}')
 CACHE_KEY=$(echo $RESPONSE | jq -r '.CacheKey')
 if [[ "$CACHE_KEY" == post:ip:8.8.8.8:* ]]; then
     echo -e "${GREEN}✓ PASS${NC} - CacheKey for POST IP: $CACHE_KEY"
@@ -68,7 +68,7 @@ echo -e "${BLUE}Test 5: Cache Deletion with POST CacheKey${NC}"
 # Prima richiesta - popola cache
 RESPONSE=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"9.9.9.9","blacklists":["zen.spamhaus.org"]}')
+  -d '{"ip":"9.9.9.9","blacklists":["bl.spamcop.net"]}')
 CACHE_KEY=$(echo $RESPONSE | jq -r '.CacheKey')
 CACHED1=$(echo $RESPONSE | jq -r '.Cached')
 echo "  First request - Cached: $CACHED1, CacheKey: $CACHE_KEY"
@@ -77,12 +77,12 @@ echo "  First request - Cached: $CACHED1, CacheKey: $CACHE_KEY"
 sleep 1
 RESPONSE=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"9.9.9.9","blacklists":["zen.spamhaus.org"]}')
+  -d '{"ip":"9.9.9.9","blacklists":["bl.spamcop.net"]}')
 CACHED2=$(echo $RESPONSE | jq -r '.Cached')
 echo "  Second request - Cached: $CACHED2"
 
 # Cancella la cache usando il CacheKey
-CLEAR_RESPONSE=$(curl -s http://localhost:8080/clear-cache/$CACHE_KEY)
+CLEAR_RESPONSE=$(curl -s -X DELETE "http://localhost:8080/clear-cache/$CACHE_KEY")
 CLEAR_STATUS=$(echo $CLEAR_RESPONSE | jq -r '.Status')
 echo "  Cache deletion - Status: $CLEAR_STATUS"
 
@@ -90,7 +90,7 @@ echo "  Cache deletion - Status: $CLEAR_STATUS"
 sleep 1
 RESPONSE=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"9.9.9.9","blacklists":["zen.spamhaus.org"]}')
+  -d '{"ip":"9.9.9.9","blacklists":["bl.spamcop.net"]}')
 CACHED3=$(echo $RESPONSE | jq -r '.Cached')
 echo "  Third request - Cached: $CACHED3"
 
@@ -105,7 +105,7 @@ echo
 echo -e "${BLUE}Test 6: Different Blacklists = Different Cache Keys${NC}"
 RESPONSE1=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"8.8.8.8","blacklists":["zen.spamhaus.org"]}')
+  -d '{"ip":"8.8.8.8","blacklists":["b.barracudacentral.org"]}')
 KEY1=$(echo $RESPONSE1 | jq -r '.CacheKey')
 
 RESPONSE2=$(curl -s -X POST http://localhost:8080/ip/check \
@@ -126,13 +126,13 @@ echo
 echo -e "${BLUE}Test 7: Same Blacklists in Different Order = Same Cache Key${NC}"
 RESPONSE1=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"7.7.7.7","blacklists":["zen.spamhaus.org","bl.spamcop.net"]}')
+  -d '{"ip":"7.7.7.7","blacklists":["bl.spamcop.net","b.barracudacentral.org"]}')
 KEY1=$(echo $RESPONSE1 | jq -r '.CacheKey')
 CACHED1=$(echo $RESPONSE1 | jq -r '.Cached')
 
 RESPONSE2=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"7.7.7.7","blacklists":["bl.spamcop.net","zen.spamhaus.org"]}')
+  -d '{"ip":"7.7.7.7","blacklists":["b.barracudacentral.org","bl.spamcop.net"]}')
 KEY2=$(echo $RESPONSE2 | jq -r '.CacheKey')
 CACHED2=$(echo $RESPONSE2 | jq -r '.Cached')
 

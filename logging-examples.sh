@@ -34,7 +34,7 @@ cat << 'EOF'
    "HTTPMethod": "POST",
    "Method": "/ip/check",
    "Param": "1.2.3.4",
-   "RequestBody": "{\"ip\":\"1.2.3.4\",\"blacklists\":[\"zen.spamhaus.org\",\"bl.spamcop.net\"]}",
+   "RequestBody": "{\"ip\":\"1.2.3.4\",\"blacklists\":[\"bl.spamcop.net\",\"b.barracudacentral.org\"]}",
    "Errors": [],
    "MemoryAlloc": 2560,
    "NumGC": 7,

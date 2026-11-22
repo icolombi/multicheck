@@ -74,7 +74,7 @@ func TestRemoveIPFromSlice(t *testing.T) {
 			wantListings: []string{"127.0.0.2", "127.0.0.11"},
 		},
 		{
-			name:          "classic false positives are dropped",
+			name:          "URIBL block and Spamhaus over-quota replies are not listings",
 			input:         []string{"127.0.0.1", "127.255.255.255"},
 			wantSentinels: []string{"127.0.0.1", "127.255.255.255"},
 		},
@@ -111,7 +111,10 @@ func TestIsQueryRefused(t *testing.T) {
 		want      bool
 	}{
 		{"no sentinels", nil, false},
-		{"only harmless false positives", []string{"127.0.0.1", "127.255.255.255"}, false},
+		// URIBL answers 127.0.0.1 to a blocked resolver, even for its test entry, and
+		// Spamhaus 127.255.255.255 when over quota: neither is a clean answer.
+		{"URIBL blocked query", []string{"127.0.0.1"}, true},
+		{"Spamhaus excessive queries", []string{"127.255.255.255"}, true},
 		{"blocked resolver", []string{"127.255.255.254"}, true},
 		{"over quota", []string{"127.255.255.252"}, true},
 		{"mixed", []string{"127.0.0.1", "127.255.255.253"}, true},
@@ -250,6 +253,7 @@ func TestApplyConfigDefaultsFillsEveryKey(t *testing.T) {
 	}{
 		{"CacheControlMaxAge", empty.CacheControlMaxAge, 3600},
 		{"RedisCacheTTL", empty.RedisCacheTTL, 300},
+		{"RedisPartialCacheTTL", empty.RedisPartialCacheTTL, 60},
 		{"MaxCustomBlacklists", empty.MaxCustomBlacklists, 20},
 		{"MaxCustomNameservers", empty.MaxCustomNameservers, 3},
 		{"MaxStringLength", empty.MaxStringLength, 253},
@@ -433,5 +437,100 @@ func assertIPsEqual(t *testing.T, label string, got []net.IP, want []string) {
 		if !got[i].Equal(net.ParseIP(want[i])) {
 			t.Errorf("%s[%d] = %v, want %v", label, i, got[i], want[i])
 		}
+	}
+}
+
+// TestApplyConfigDefaultsCapsPartialTTL covers a partial result outliving a
+// complete one when the full TTL is configured below the partial default.
+func TestApplyConfigDefaultsCapsPartialTTL(t *testing.T) {
+	cfg := Config{RedisCacheTTL: 30, RedisPartialCacheTTL: 120}
+	applyConfigDefaults(&cfg)
+
+	if cfg.RedisPartialCacheTTL != 30 {
+		t.Errorf("RedisPartialCacheTTL = %d, want it capped at RedisCacheTTL (30)", cfg.RedisPartialCacheTTL)
+	}
+}
+
+func TestCacheTTLFor(t *testing.T) {
+	if got := cacheTTLFor(nil); got != configuration.RedisCacheTTL {
+		t.Errorf("cacheTTLFor(no errors) = %d, want the full TTL %d", got, configuration.RedisCacheTTL)
+	}
+	if got := cacheTTLFor([]string{"zone refused the query"}); got != configuration.RedisPartialCacheTTL {
+		t.Errorf("cacheTTLFor(errors) = %d, want the partial TTL %d", got, configuration.RedisPartialCacheTTL)
+	}
+}
+
+// TestGetCacheKeysAreNamespaced covers the cache poisoning where GET /domain/1.2.3.4
+// wrote under the same key GET /ip/1.2.3.4 read.
+func TestGetCacheKeysAreNamespaced(t *testing.T) {
+	if ipCacheKey("1.2.3.4") == domainCacheKey("1.2.3.4") {
+		t.Fatal("IP and domain results share a cache key")
+	}
+	if got := ipCacheKey("1.2.3.4"); got != "ip:1.2.3.4" {
+		t.Errorf("ipCacheKey = %q, want %q", got, "ip:1.2.3.4")
+	}
+	if got := domainCacheKey("example.com"); got != "domain:example.com" {
+		t.Errorf("domainCacheKey = %q, want %q", got, "domain:example.com")
+	}
+}
+
+func TestNormalizeDomain(t *testing.T) {
+	tests := map[string]string{
+		"example.com":      "example.com",
+		"Example.COM":      "example.com",
+		"example.com.":     "example.com",
+		"  example.com \t": "example.com",
+	}
+	for input, want := range tests {
+		if got := normalizeDomain(input); got != want {
+			t.Errorf("normalizeDomain(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestNormalizeBlacklists(t *testing.T) {
+	got := normalizeBlacklists([]string{" bl.spamcop.net", "BL.SPAMCOP.NET.", "", "multi.uribl.com", ""})
+	want := []string{"bl.spamcop.net", "", "multi.uribl.com", ""}
+
+	if len(got) != len(want) {
+		t.Fatalf("normalizeBlacklists = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("normalizeBlacklists[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Empty entries must survive, so that validation still rejects the request.
+	if valid, _ := validateBlacklists(got, 20); valid {
+		t.Error("an empty entry was silently dropped instead of being rejected")
+	}
+}
+
+func TestNormalizeNameservers(t *testing.T) {
+	got := normalizeNameservers([]string{" 8.8.8.8 ", "1.1.1.1"})
+	if got[0] != "8.8.8.8" || got[1] != "1.1.1.1" {
+		t.Errorf("normalizeNameservers = %q, want trimmed addresses", got)
+	}
+}
+
+func TestIsCheckableDomain(t *testing.T) {
+	tests := []struct {
+		name   string
+		domain string
+		want   bool
+	}{
+		{"plain domain", "example.com", true},
+		{"subdomain", "mail.example.co.uk", true},
+		{"IPv4 address", "1.2.3.4", false},
+		{"numeric TLD", "1.2.3.4.5", false},
+		{"invalid characters", "not_a_domain.com", false},
+		{"single label", "localhost", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isCheckableDomain(tt.domain); got != tt.want {
+				t.Errorf("isCheckableDomain(%q) = %v, want %v", tt.domain, got, tt.want)
+			}
+		})
 	}
 }

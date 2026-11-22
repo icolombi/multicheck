@@ -1,26 +1,40 @@
+# Removed on 2026-11-22, add them back only with a resolver they accept:
+# - dnsbl.sorbs.net, spam.dnsbl.sorbs.net: SORBS shut down; the zones no longer
+#   answer even for the 127.0.0.2 test entry, so every IP looked clean.
+# - zen.spamhaus.org, cbl.abuseat.org, dbl.spamhaus.org: Spamhaus refuses queries
+#   relayed by public and cloud resolvers (127.255.255.254). Re-enabling them needs
+#   a Spamhaus DQS key or a dedicated recursive resolver.
+# - multi.surbl.org: SERVFAIL through public resolvers, even for its own
+#   test.surbl.org entry. Same requirement as Spamhaus to bring it back.
+# - multi.uribl.com: answers 127.0.0.1 ("query blocked") through public resolvers,
+#   even for its test.uribl.com entry.
+# - bl.score.senderscore.com: answers 127.255.255.255 (over quota) even for its
+#   127.0.0.2 test entry.
+# - abuse.spfbl.net: not a blacklist. It publishes the abuse contact of a domain
+#   (TXT "network-abuse@google.com" with A 127.0.0.3), so every domain with a
+#   registered contact came back "Blacklisted".
+#
+# rhsbl.zapbl.net is the only domain list left that answers public resolvers. It is
+# aggressive: it also lists large senders such as github.com and mailchimp.com.
+# Add dbl.spamhaus.org, multi.uribl.com and multi.surbl.org back once the service
+# uses a resolver these lists accept. With an empty domainBlacklist,
+# GET /domain/{domain} answers 503 instead of a meaningless "clean".
 ipBlacklist = """
 b.barracudacentral.org
-bl.score.senderscore.com
 bl.spamcop.net
-cbl.abuseat.org
-dnsbl.sorbs.net
 dnsbl.spfbl.net
-multi.surbl.org
-spam.dnsbl.sorbs.net
-zen.spamhaus.org
 black.dnsbl.brukalai.lt
 spam.dnsbl.anonmails.de
-bl.mailspike.net""" 
+bl.mailspike.net"""
 
 domainBlacklist = """
-multi.uribl.com
-abuse.spfbl.net
-dbl.spamhaus.org
-multi.surbl.org"""
+rhsbl.zapbl.net"""
 
 cacheControlMaxAge = 3600 # Seconds
 
 redisCacheTTL = 300 # Seconds
+
+redisPartialCacheTTL = 60 # Seconds a result with DNS errors (timeout, refused query) stays cached; capped at redisCacheTTL
 
 maxCustomBlacklists = 20 # Maximum number of custom blacklists allowed in POST requests
 

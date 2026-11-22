@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 // touching the filesystem or the network.
 func setupUnitEnvironment() {
 	configuration = Config{
-		ipBlacklist:     []string{"zen.spamhaus.org"},
+		ipBlacklist:     []string{"bl.spamcop.net"},
 		domainBlacklist: []string{"multi.uribl.com"},
 	}
 	applyConfigDefaults(&configuration)
