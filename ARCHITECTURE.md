@@ -54,7 +54,7 @@ The heart of the service is implemented using the **Gorilla Mux** router, which 
 - **`GetDomain()`**: Endpoint `/domain/{domain}` for domain verification against configured blacklists
 - **`PostCheckIp()`**: Endpoint `/ip/check` (POST) for IP verification with custom blacklists
 - **`PostCheckDomain()`**: Endpoint `/domain/check` (POST) for domain verification with custom blacklists
-- **`DelCache()`**: Endpoint `DELETE /clear-cache/{key}` to manually invalidate a cache entry. Restricted by `isOwnCacheKey()` to keys this service could have written
+- **`DelCache()`**: Endpoint `DELETE /clear-cache/{key}` to manually invalidate a cache entry. Restricted by `resolveCacheKey()` to keys this service could have written; a bare IP or domain is mapped to its namespaced key
 
 #### Custom Blacklist Endpoints (POST)
 
@@ -84,9 +84,8 @@ The POST endpoints `/ip/check` and `/domain/check` allow clients to override the
 {
   "ip": "1.2.3.4",
   "blacklists": [
-    "zen.spamhaus.org",
     "bl.spamcop.net",
-    "cbl.abuseat.org"
+    "b.barracudacentral.org"
   ],
   "nameservers": [
     "8.8.8.8",
@@ -216,21 +215,23 @@ the difference between "clean" and "we could not find out":
 
 ```go
 var dnsblSentinelCodes = []string{
-    "127.0.0.1",       // long-standing false positive
-    "127.255.255.252", // query refused
+    "127.0.0.1",       // URIBL: query blocked
+    "127.255.255.252", // Spamhaus: typing error in the zone name
     "127.255.255.253", // query refused
-    "127.255.255.254", // query refused
-    "127.255.255.255", // long-standing false positive
+    "127.255.255.254", // Spamhaus: query through a public resolver
+    "127.255.255.255", // Spamhaus: excessive number of queries
 }
 
 func removeIPFromSlice(slice []net.IP) (result []net.IP, sentinels []net.IP)
 ```
 
-The `127.255.255.252-254` range is how Spamhaus (and others) signal that the query
-itself was rejected, typically because the resolver is a large public one or is over
-its quota. `isQueryRefused()` turns those into an entry in `errorList`; counting them
-as listings produced confident false positives exactly when the service was being
-rate limited.
+Every sentinel means the DNSBL did not answer: `127.255.255.252-255` is how
+Spamhaus (and others) reject a query, typically because the resolver is a large
+public one or is over its quota, and `127.0.0.1` is URIBL's "query blocked".
+`isQueryRefused()` turns any of them into an entry in `errorList`. Counting them as
+listings produced confident false positives exactly when the service was being rate
+limited; dropping `127.0.0.1` / `127.255.255.255` silently (the behaviour before
+v1.6.16) made every name look clean on a blocked resolver.
 
 ### 3. Redis Caching System (`db.go`)
 
@@ -276,8 +277,14 @@ an expiration.
 
 **Cache Keys:**
 
-1. **GET endpoints**: Simple keys (IP or domain as-is)
-   - Example: `"1.2.3.4"` or `"example.com"`
+1. **GET endpoints**: Namespaced keys, `ip:<ip>` and `domain:<domain>` (since v1.6.16)
+   - Example: `"ip:1.2.3.4"` or `"domain:example.com"`
+   - The namespace is a security boundary: `1.2.3.4` is also a valid domain name, and
+     with bare keys `GET /domain/1.2.3.4` cached a domain-list verdict that
+     `GET /ip/1.2.3.4` then served. The domain endpoints also reject IPv4 addresses
+     and all-digit TLDs (`isCheckableDomain`)
+   - Domain names are normalized (`normalizeDomain`: lowercase, no trailing dot)
+     before the key is built
 
 2. **POST endpoints**: Composite keys with hash (since January 17, 2026)
    - Format: `post:ip:<ip>:<hash>` or `post:domain:<domain>:<hash>`
@@ -286,9 +293,14 @@ an expiration.
    - **Cache independence**: Nameservers don't affect cache keys (DNS results should be consistent)
    - **Order independence**: Blacklist array order doesn't matter (sorted before hashing)
 
-**Cache Value:** Entire serialized JSON response structure
+**Cache Value:** Serialized JSON response structure, with `Errors` holding only the
+DNS errors of the check (Redis errors describe a single request and are not stored)
 
-**TTL:** Configurable via `redisCacheTTL` (default: 300 seconds)
+**TTL:** `redisCacheTTL` (default: 300 seconds) for a complete result;
+`redisPartialCacheTTL` (default: 60 seconds, capped at `redisCacheTTL`) when the DNS
+fan-out reported errors (`cacheTTLFor`). A partial result used to be skipped
+entirely, so a blacklist refusing every query disabled the cache. On a hit the cached
+errors are appended to the response, so a partial result is still visible as such
 
 **Exposed to API:** The `CacheKey` field in responses contains the exact Redis key used
 
@@ -332,15 +344,14 @@ The service uses **Viper** to manage configurations in TOML format:
 ```toml
 ipBlacklist = """
 b.barracudacentral.org
-bl.spamcop.net
-zen.spamhaus.org"""
+bl.spamcop.net"""
 
 domainBlacklist = """
-multi.uribl.com
-dbl.spamhaus.org"""
+rhsbl.zapbl.net"""              # an empty list makes GET /domain answer 503
 
 cacheControlMaxAge = 3600       # Client-side cache hint (seconds)
 redisCacheTTL = 300             # Server-side cache TTL (seconds)
+redisPartialCacheTTL = 60       # TTL of a result with DNS errors (seconds)
 maxCustomBlacklists = 20        # Max blacklists in POST requests
 maxCustomNameservers = 3        # Max nameservers in POST requests
 maxRequestBodySize = 1048576    # Max request body (1MB)
@@ -417,7 +428,7 @@ type Log struct {
 1. Client sends GET request /ip/{ip} or /domain/{domain}
    OR POST request /ip/check or /domain/check with custom blacklists
    ↓
-2. Handler validates input (net.ParseIP or validator.IsValidDomain)
+2. Handler normalizes, then validates input (isIPv4 or isCheckableDomain)
    ↓
 3. If invalid → Immediate response with Status: false (HTTP 400)
    ↓
@@ -427,7 +438,7 @@ type Log struct {
    - If invalid → HTTP 400 with error message
    ↓
 5. Build cache key:
-   - GET: Simple key (IP or domain)
+   - GET: Namespaced key (ip:<ip> or domain:<domain>)
    - POST: Composite key with hash (post:ip:<ip>:<hash>)
    ↓
 6. Check Redis cache (getRedisKey)
@@ -1118,6 +1129,35 @@ Usable for:
 - [ ] VS Code extension
 
 ## Recent Changes
+
+### November 22, 2026 (v1.6.16 — cache isolation and incomplete results)
+
+Backend:
+
+- GET cache keys are namespaced (`ip:` / `domain:`) and the domain endpoints reject
+  IPv4 addresses. With bare keys, `GET /domain/1.2.3.4` wrote a domain-list verdict
+  that `GET /ip/1.2.3.4` served as the IP's: an anonymous cache poisoning
+- Inputs are normalized before validation (`normalizeDomain`, `normalizeBlacklists`,
+  `normalizeNameservers`): entries used to be validated trimmed but queried as sent
+- Results with DNS errors are cached for `redisPartialCacheTTL` instead of never, and
+  keep their errors on a cache hit
+- `GET /domain/{domain}` reports why a name was rejected; `GET /` lists
+  `DELETE /clear-cache`
+- Blacklists removed from `config.toml`: SORBS (shut down), Spamhaus, SURBL, URIBL and
+  Senderscore (refuse public resolvers), `abuse.spfbl.net` (an abuse-contact
+  directory, not a blacklist: it "listed" google.com). `domainBlacklist` keeps
+  only `rhsbl.zapbl.net`, and a GET endpoint with an empty list answers `503`
+  instead of "not listed"
+- Every DNSBL sentinel (`127.0.0.1`, `127.255.255.252-255`) is reported as a refused
+  query: `127.0.0.1` and `127.255.255.255` used to be dropped silently
+
+Frontend:
+
+- New **Incomplete** verdict (`verdict.ts`): a result with errors and no listing was
+  shown as "Clean"
+- The advanced options (custom blacklists and nameservers) are validated before sending
+- nginx: security headers on every location, precompressed assets (`gzip_static`),
+  gzip for proxied JSON, `index.html` revalidated on each load, `server_tokens off`
 
 ### July 26, 2026 (v1.6.0 — correctness and security fixes)
 

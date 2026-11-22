@@ -146,9 +146,15 @@ curl http://localhost:8080/ip/1.2.3.4
   "Errors": [],
   "TimeTaken": 0.245,
   "Cached": false,
-  "CacheKey": "1.2.3.4"
+  "CacheKey": "ip:1.2.3.4"
 }
 ```
+
+**Incomplete results:** a non-empty `Errors[]` with `BlackListed: false` means some
+blacklists could not be checked (DNS timeout, or a blacklist refusing the query).
+The address is then *not listed on the blacklists that answered*, which is not the
+same as clean: the web UI shows it as **Incomplete**. Such a result is cached for
+`redisPartialCacheTTL` seconds only, and a cached copy keeps its errors.
 
 ### Domain Verification
 
@@ -157,6 +163,14 @@ GET /domain/{domain}
 ```
 
 Checks if a domain is present in any of the configured blacklists.
+
+The name is normalized first (lowercased, trailing dot removed), so `Example.COM.`
+and `example.com` are the same check and share a cache entry. An IPv4 address, or
+any name whose top-level label is all digits, is rejected with `400`: use the IP
+endpoints for addresses.
+
+With an empty `domainBlacklist` the endpoint answers `503` with `"no domain blacklists configured on this server: use POST
+/domain/check with a custom blacklist"`.
 
 **Example:**
 
@@ -176,7 +190,7 @@ curl http://localhost:8080/domain/example.com
   "Errors": [],
   "TimeTaken": 0.198,
   "Cached": false,
-  "CacheKey": "example.com"
+  "CacheKey": "domain:example.com"
 }
 ```
 
@@ -195,9 +209,8 @@ Checks an IP address against a custom list of blacklists, overriding the default
 {
   "ip": "1.2.3.4",
   "blacklists": [
-    "zen.spamhaus.org",
     "bl.spamcop.net",
-    "cbl.abuseat.org"
+    "b.barracudacentral.org"
   ],
   "nameservers": ["8.8.8.8", "1.1.1.1"]
 }
@@ -238,6 +251,9 @@ Checks an IP address against a custom list of blacklists, overriding the default
   - No invalid DNS characters allowed
   - Cannot start/end with `.` or `-`
   - No consecutive dots allowed
+  - Entries are trimmed, lowercased and stripped of a trailing dot before being
+    validated, and duplicates are dropped: the values validated are exactly the
+    ones queried and hashed into the cache key
 - `nameservers` (optional): Array of custom DNS nameservers
   - Must be valid IP addresses
   - Maximum 3 nameservers (configurable via `maxCustomNameservers` in config.toml)
@@ -293,7 +309,6 @@ Checks a domain against a custom list of blacklists, overriding the default conf
 {
   "domain": "example.com",
   "blacklists": [
-    "dbl.spamhaus.org",
     "multi.uribl.com"
   ],
   "nameservers": ["8.8.8.8", "1.1.1.1"]
@@ -327,7 +342,8 @@ Checks a domain against a custom list of blacklists, overriding the default conf
 
 **Validation Rules:**
 
-- `domain`: Must be a valid domain name format
+- `domain`: Must be a valid domain name format, normalized like `GET /domain/{domain}`;
+  IPv4 addresses are rejected
 - `blacklists`: Same validation rules as IP check endpoint
 - `nameservers`: Same validation rules as IP check endpoint
 
@@ -396,9 +412,12 @@ Removes a specific key from the Redis cache.
 **Examples:**
 
 ```bash
-# Clear GET endpoint cache (simple key)
+# Clear GET endpoint cache using CacheKey from response
+curl -X DELETE http://localhost:8080/clear-cache/ip:1.2.3.4
+curl -X DELETE http://localhost:8080/clear-cache/domain:example.com
+
+# Bare IP or domain: still accepted, mapped to the keys above
 curl -X DELETE http://localhost:8080/clear-cache/1.2.3.4
-curl -X DELETE http://localhost:8080/clear-cache/example.com
 
 # Clear POST endpoint cache using CacheKey from response
 curl -X DELETE http://localhost:8080/clear-cache/post:ip:1.2.3.4:a3f5c8d12e9b7f6a
@@ -414,8 +433,11 @@ curl -X DELETE http://localhost:8080/clear-cache/post:domain:example.com:f7b2d9e
 | `500` | Redis returned an error on the delete |
 | `503` | Redis is unavailable |
 
-**Accepted keys:** an IPv4 address, a valid domain name, or a key prefixed with
-`post:ip:` / `post:domain:`. Anything else is rejected with `400`. The endpoint is
+**Accepted keys:** a `CacheKey` returned by the API (`ip:`, `domain:`, `post:ip:`,
+`post:domain:` prefixes), or a bare IPv4 address or domain name, which is mapped to
+its `ip:` / `domain:` key for compatibility with clients written before 1.6.16. The
+`Key` field of the response is the Redis key actually deleted. Anything else is
+rejected with `400`. The endpoint is
 unauthenticated and deletes by exact key, so this restriction is what keeps it from
 being used to delete entries belonging to other applications sharing the same Redis
 database.
@@ -431,20 +453,19 @@ The configuration is located in `config.toml`:
 ipBlacklist = """
 b.barracudacentral.org
 bl.spamcop.net
-zen.spamhaus.org
 ..."""
 
-# Domain blacklist
+# Domain blacklist (see "Removed blacklists" below)
 domainBlacklist = """
-multi.uribl.com
-dbl.spamhaus.org
-..."""
+rhsbl.zapbl.net"""
 
 # HTTP cache (seconds)
 cacheControlMaxAge = 3600
 
 # Redis cache TTL (seconds)
 redisCacheTTL = 300
+# TTL of a result with DNS errors (seconds), capped at redisCacheTTL
+redisPartialCacheTTL = 60
 
 # Request limits
 maxCustomBlacklists = 20     # Max blacklists in a POST request
@@ -503,6 +524,7 @@ upgrade:
 | `listenPort` | `:8080` | `redisMaxActive` | `64` |
 | `trustProxyHeaders` | `false` | `redisConnTimeout` | `2` |
 | `redisHealthCheckInterval` | `5` | `memStatsInterval` | `10` |
+| `redisPartialCacheTTL` | `60` | | |
 
 **Startup validation:** the service refuses to start when both blacklists are empty
 or when `nameServers` contains something that is not an IP address. Failing loudly
@@ -514,6 +536,29 @@ resolves through the cluster DNS). Prefer a dedicated resolver in production: DN
 providers rate-limit and eventually block queries coming from large public
 resolvers, and a blocked resolver answers with a refusal code rather than a real
 result.
+
+**Removed blacklists:** SORBS has shut down and its zones no longer answer, even for
+the `127.0.0.2` test entry. Spamhaus (`zen`, `dbl`, `cbl.abuseat.org`), SURBL
+(`multi.surbl.org`), URIBL (`multi.uribl.com`) and Senderscore refuse queries relayed
+by public and cloud resolvers, so every check came back incomplete. `abuse.spfbl.net`
+is not a blacklist: it publishes the abuse contact of a domain, so every domain with
+one came back "Blacklisted". Add the refusing lists back only together with a
+Spamhaus DQS key or a dedicated recursive resolver.
+
+**Domain blacklist:** after those removals `domainBlacklist` ships with
+`rhsbl.zapbl.net` only, the one domain list found to answer public resolvers. It is
+an aggressive list: large senders such as github.com and mailchimp.com are listed
+too, so read a domain verdict as "seen in spam" rather than "malicious".
+
+**Empty lists:** if `domainBlacklist` (or `ipBlacklist`) is empty, the corresponding
+GET endpoint answers `503` ("no domain blacklists configured") instead of a "not
+listed" computed from zero queries. `POST /domain/check` keeps working with a
+caller-supplied list.
+
+**Sentinel replies:** `127.0.0.1` (URIBL "query blocked") and
+`127.255.255.252-255` (Spamhaus refusal codes) are never counted as listings nor
+dropped silently: they become an entry in `Errors[]`, so the result is reported as
+incomplete.
 
 **Background monitors:** Redis availability and memory usage are sampled on a
 timer instead of per request. This keeps a Redis `PING` round-trip and
@@ -581,7 +626,7 @@ Multicheck generates structured logs in JSON format on stdout. Each request is l
    "HTTPMethod": "POST",
    "Method": "/ip/check",
    "Param": "1.2.3.4",
-   "RequestBody": "{\"ip\":\"1.2.3.4\",\"blacklists\":[\"zen.spamhaus.org\",\"bl.spamcop.net\"]}",
+   "RequestBody": "{\"ip\":\"1.2.3.4\",\"blacklists\":[\"bl.spamcop.net\",\"b.barracudacentral.org\"]}",
    "Errors": [],
    "MemoryAlloc": 2560,
    "NumGC": 7,
@@ -697,6 +742,7 @@ frontend/
 │   │   ├── api.ts                 # API client functions
 │   │   ├── types.ts               # TypeScript interfaces
 │   │   ├── validators.ts          # Zod validation schemas
+│   │   ├── verdict.ts             # Listed / clean / incomplete classification
 │   │   └── components/
 │   │       ├── CheckForm.svelte   # Main form with IP/domain input
 │   │       ├── ResultsCard.svelte # Results display component
@@ -707,10 +753,21 @@ frontend/
 │   │   └── health/
 │   │       └── +page.svelte       # Health dashboard
 │   └── app.css                    # Global styles (Tailwind)
+├── nginx/
+│   ├── default.conf.template      # Static files, /api proxy, gzip, cache headers
+│   └── security-headers.conf      # Headers included in every location
 ├── package.json                   # Dependencies and scripts
 ├── vite.config.ts                 # Vite config with API proxy and Tailwind plugin
 └── README.md                      # Frontend-specific documentation
 ```
+
+**Serving:** nginx serves the precompressed `.gz` assets built by adapter-static
+(`gzip_static`), revalidates `index.html` on every load (`Cache-Control: no-cache`)
+so a new release is picked up immediately, and sends `X-Content-Type-Options`,
+`Referrer-Policy`, `X-Frame-Options` / `frame-ancestors`, `Cross-Origin-Opener-Policy`
+and `Permissions-Policy` on every response. The headers live in a snippet included
+by each `location`, because nginx discards inherited `add_header` directives in any
+location that declares its own.
 
 **Key Frontend Commands:**
 

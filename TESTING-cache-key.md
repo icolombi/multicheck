@@ -20,7 +20,7 @@ Or directly:
 
 The test script verifies:
 
-1. ✅ GET endpoints expose simple cache keys (`"1.1.1.1"`, `"example.com"`)
+1. ✅ GET endpoints expose namespaced cache keys (`"ip:1.1.1.1"`, `"domain:example.com"`)
 2. ✅ POST endpoints expose composite cache keys (`"post:ip:1.2.3.4:abc123"`)
 3. ✅ Cache deletion works for POST endpoints with custom blacklists
 4. ✅ Different blacklists produce different cache keys
@@ -38,7 +38,7 @@ curl -s http://localhost:8080/ip/1.1.1.1 | jq '{IP, Cached, CacheKey}'
 {
   "IP": "1.1.1.1",
   "Cached": false,
-  "CacheKey": "1.1.1.1"
+  "CacheKey": "ip:1.1.1.1"
 }
 ```
 
@@ -48,7 +48,7 @@ curl -s http://localhost:8080/ip/1.1.1.1 | jq '{IP, Cached, CacheKey}'
 # Check IP with custom blacklists
 curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"8.8.8.8","blacklists":["zen.spamhaus.org","bl.spamcop.net"]}' \
+  -d '{"ip":"8.8.8.8","blacklists":["bl.spamcop.net","b.barracudacentral.org"]}' \
   | jq '{IP, Cached, CacheKey}'
 
 # Expected output:
@@ -65,13 +65,13 @@ curl -s -X POST http://localhost:8080/ip/check \
 # 1. Make a request and save the cache key
 RESPONSE=$(curl -s -X POST http://localhost:8080/ip/check \
   -H "Content-Type: application/json" \
-  -d '{"ip":"8.8.8.8","blacklists":["zen.spamhaus.org"]}')
+  -d '{"ip":"8.8.8.8","blacklists":["bl.spamcop.net"]}')
 
 CACHE_KEY=$(echo $RESPONSE | jq -r '.CacheKey')
 echo "Cache Key: $CACHE_KEY"
 
 # 2. Clear the cache using the key
-curl -s http://localhost:8080/clear-cache/$CACHE_KEY | jq
+curl -s -X DELETE "http://localhost:8080/clear-cache/$CACHE_KEY" | jq
 
 # Expected output:
 {
@@ -86,10 +86,10 @@ curl -s http://localhost:8080/clear-cache/$CACHE_KEY | jq
 
 ### Test in Browser
 
-1. Open http://localhost:5173
+1. Open <http://localhost:5173>
 2. Enter IP: `8.8.8.8`
 3. Click "Advanced Options"
-4. Add custom blacklist: `zen.spamhaus.org`
+4. Add custom blacklist: `bl.spamcop.net`
 5. Click "Check"
 6. In results:
    - Verify "Cached: No" on first request
@@ -107,11 +107,13 @@ curl -s http://localhost:8080/clear-cache/$CACHE_KEY | jq
 ### Expected Behavior
 
 **Before this update (BROKEN):**
+
 - Cache deletion with custom blacklists didn't work
 - Frontend used wrong key (only IP/domain, missing hash)
 - Cache appeared cleared but remained in Redis
 
 **After this update (FIXED):**
+
 - Cache deletion works for all endpoints
 - Frontend uses exact key from API response
 - Cache is actually cleared from Redis
@@ -119,12 +121,15 @@ curl -s http://localhost:8080/clear-cache/$CACHE_KEY | jq
 ## Cache Key Formats
 
 ### GET Endpoints
-- Format: `<ip>` or `<domain>`
+
+- Format: `ip:<ip>` or `domain:<domain>` (since 1.6.16; the namespace keeps an IP
+  and a domain-shaped `1.2.3.4` from sharing an entry)
 - Examples:
-  - `1.2.3.4`
-  - `example.com`
+  - `ip:1.2.3.4`
+  - `domain:example.com`
 
 ### POST Endpoints
+
 - Format: `post:<type>:<identifier>:<hash>`
 - Hash: 16-char truncated SHA256 of sorted blacklists
 - Examples:
@@ -138,6 +143,7 @@ curl -s http://localhost:8080/clear-cache/$CACHE_KEY | jq
 **Problem:** API response shows `"CacheKey": null`
 
 **Solution:**
+
 - Rebuild backend: `make build`
 - Restart containers: `make build-compose`
 - Ensure using latest code
@@ -147,6 +153,7 @@ curl -s http://localhost:8080/clear-cache/$CACHE_KEY | jq
 **Problem:** Clear cache shows success but item remains cached
 
 **Solution:**
+
 - Check you're using the exact `CacheKey` from API response
 - Don't construct cache key manually (that was the old broken method)
 - Verify backend is returning `CacheKey` field
@@ -156,6 +163,7 @@ curl -s http://localhost:8080/clear-cache/$CACHE_KEY | jq
 **Problem:** Frontend still showing old behavior
 
 **Solution:**
+
 ```bash
 cd frontend
 npm install  # Update dependencies if needed
@@ -168,6 +176,7 @@ npm run dev
 ### Clear Browser Cache
 
 If seeing stale frontend code:
+
 1. Open DevTools (F12)
 2. Right-click refresh button
 3. Select "Empty Cache and Hard Reload"
@@ -196,6 +205,7 @@ Use this checklist when testing:
 ## Performance Notes
 
 The cache key functionality adds minimal overhead:
+
 - Hash computation: ~0.001ms (done once per request)
 - JSON serialization includes one extra string field
 - No impact on DNS lookup performance
@@ -204,6 +214,7 @@ The cache key functionality adds minimal overhead:
 ## Security Notes
 
 The cache key is safe to expose:
+
 - Contains no sensitive information
 - IP/domain are already in request/response
 - Hash is one-way (can't reverse to get blacklist array)

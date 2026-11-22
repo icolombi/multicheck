@@ -44,7 +44,7 @@ Multicheck is a Go-based REST API service that checks domain and IP reputation a
 
 1. Client requests GET to `/ip/{ip}`, `/domain/{domain}`, or POST to `/ip/check` or `/domain/check`
 2. Handler checks Redis cache first (`getRedisKey`):
-   - GET endpoints: use simple key (IP or domain)
+   - GET endpoints: use a namespaced key, `ip:<ip>` or `domain:<domain>`
    - POST endpoints: use composite key `post:ip:<ip>:<hash>` or `post:domain:<domain>:<hash>` where hash is SHA256 of sorted blacklist array
 3. On cache miss: concurrent DNS lookups against all blacklists using goroutines (`checkBlacklistIP`/`checkBlacklistDomain`)
 4. Results cached in Redis with TTL (`setRedisKey`) for both GET and POST endpoints
@@ -87,14 +87,16 @@ Functions:
 
 | Endpoint | Cache Key Format | TTL Source | Fields Cached |
 | --- | --- | --- | --- |
-| GET /ip/{ip} | IP address (as-is) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidIP`, `TimeTaken`, `Errors` |
-| GET /domain/{domain} | Domain name (as-is) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidDomain`, `TimeTaken`, `Errors` |
+| GET /ip/{ip} | `ip:<ip>` (`ipCacheKey`) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidIP`, `TimeTaken`, `Errors` |
+| GET /domain/{domain} | `domain:<domain>` (`domainCacheKey`, normalized name) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidDomain`, `TimeTaken`, `Errors` |
 | POST /ip/check | `post:ip:<ip>:<hash>` (hash = 16-char truncated SHA256 of sorted blacklist array) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidIP`, `TimeTaken`, `Errors` |
 | POST /domain/check | `post:domain:<domain>:<hash>` (hash = 16-char truncated SHA256 of sorted blacklist array) | `redisCacheTTL` | `BlackListed`, `BlackList`, `ValidDomain`, `TimeTaken`, `Errors` |
 
 - **Cache indicator**: Set `Cached: true` in response when served from Redis
 - **Cache independence**: POST endpoints cache based on blacklist array only; nameservers do not affect the cache key
-- **Never cache a partial result**: when the DNS fan-out returns any error (timeout, resolver failure), skip the cache write. Keep those errors in a variable separate from the response-wide error list — the latter also holds Redis errors, which must not block caching
+- **Namespaced GET keys**: never go back to the bare IP or domain as key. `1.2.3.4` is also a valid domain name, so `GET /domain/1.2.3.4` used to cache a domain-list verdict that `GET /ip/1.2.3.4` then served as the IP's: anyone could make a listed IP look clean for a whole TTL. The domain endpoints also reject IPv4 addresses and all-digit TLDs (`isCheckableDomain`)
+- **Partial results get a short TTL**: when the DNS fan-out returns any error (timeout, refused query), the result is cached for `redisPartialCacheTTL` (default 60s, capped at `redisCacheTTL`) via `cacheTTLFor()`. Not caching it at all meant a blacklist refusing every query disabled the cache and made every request a full fan-out. Keep the DNS errors (`checkErrors`) separate from the response-wide list: only they are stored with the cached value (Redis errors describe one request), and a cache hit appends them to the response so the client still sees the result as incomplete
+- **Normalize before validating**: `normalizeDomain()`, `normalizeBlacklists()` (trim, lowercase, no trailing dot, dedupe; empty entries kept so validation rejects them) and `normalizeNameservers()` run before validation, so the values validated are exactly the ones queried and hashed into the key
 - **Single write command**: `setRedisKey()` uses `SET key value EX ttl`. Do not split it back into `SET` + `EXPIRE`: the pipelined version could leave a key without a TTL and swallowed the `SET` error
 - **Redis down**: skip both the cache read and the cache write instead of letting them fail
 - **Client-side**: `cacheControlMaxAge` (default 3600s) — HTTP `Cache-Control` header sent to clients
@@ -104,11 +106,12 @@ Functions:
 
 **Key configuration parameters:**
 
-- `ipBlacklist` / `domainBlacklist` - Space-separated lists of DNSBL hostnames to check against (e.g., `zen.spamhaus.org bl.spamcop.net`)
+- `ipBlacklist` / `domainBlacklist` - Space-separated lists of DNSBL hostnames to check against (e.g., `bl.spamcop.net b.barracudacentral.org`)
 
 Use `logRequest()` helper function for consistent logging across all handlers
 
 - `redisCacheTTL` - Server-side cache expiration (seconds)
+- `redisPartialCacheTTL` - Cache expiration of a result with DNS errors (seconds, default 60, capped at `redisCacheTTL`)
 - `cacheControlMaxAge` - Client-side cache hint via HTTP header (seconds)
 - `maxCustomBlacklists` - Maximum blacklists allowed in POST requests (default 20)
 - `maxCustomNameservers` - Maximum nameservers allowed in POST requests (default 3)
@@ -194,8 +197,8 @@ Tests now include visual enhancements for better readability:
 | Test Function | Endpoint | Input | Expected Assertion |
 | --- | --- | --- | --- |
 | `TestHealthCheckHandler` | GET /health | — | HTTP 200, Redis connected, uptime and version fields present |
-| `TestDomainBlacklist` | GET /domain/{domain} | `test.uribl.com` | Response contains 127.0.0.14 from `multi.uribl.com` |
-| `TestIPBlacklist` | GET /ip/{ip} | `2.0.0.127` | Response contains 127.0.0.11 from `zen.spamhaus.org` |
+| `TestDomainBlacklist` | GET /domain/{domain} | `example.com` | Response contains 127.0.0.2 from `rhsbl.zapbl.net`. Skipped (`requireDomainBlacklist`) if `domainBlacklist` is empty |
+| `TestIPBlacklist` | GET /ip/{ip} | `127.0.0.2` | Response contains 127.0.0.2 from `bl.spamcop.net` |
 | `TestPostCheckDomain` | POST /domain/check | custom blacklist body | Domain listed on target blacklist with correct DNSBL response code |
 
 ### POST Endpoints Request Body
@@ -213,8 +216,7 @@ Tests now include visual enhancements for better readability:
 - DNSBL servers return IPs in `127.0.0.x` range to indicate positive matches
 - Different codes indicate different types of listings (e.g., 127.0.0.2 = spam, 127.0.0.11 = XBL)
 - `removeIPFromSlice()` filters the sentinel replies listed in `dnsblSentinelCodes` and returns them separately from the genuine listings
-- `127.0.0.1` and `127.255.255.255` are filtered as they're sometimes false positives
-- `127.255.255.252-254` mean **the query was refused** (public resolver, or over quota) — not "listed". `isQueryRefused()` turns them into an entry in `errorList` so the result is reported as unknown instead of as a confident false positive
+- **Every sentinel means "no answer"**, never "clean" and never "listed": `127.0.0.1` is URIBL's "query blocked", `127.255.255.252-255` are Spamhaus's refusal codes (typo in the zone, public resolver, over quota). `isQueryRefused()` turns any of them into an entry in `errorList`, so the result is reported as incomplete. Do not go back to dropping `127.0.0.1` / `127.255.255.255` silently as "false positives": that made every domain look clean on URIBL through a blocked resolver
 - Always preserve other `127.x.x.x` responses - they're valid blacklist indicators
 
 ### Validation:**
@@ -307,16 +309,31 @@ The suite is split in two, and the split must be preserved:
 - `GET /` - Lists all endpoints and configuration
 - `GET /health` - Health check with Redis status and uptime. Always answers `200`: the service is designed to run without Redis
 - `GET /ip/{ip}` - Check IP against blacklists (validates with `isIPv4`, **not** `net.ParseIP`: IPv6 has no valid DNSBL reversal)
-- `GET /domain/{domain}` - Check domain against blacklists (validates with `validator.IsValidDomain`)
+- `GET /domain/{domain}` - Check domain against blacklists (normalized with `normalizeDomain`, validated with `isCheckableDomain`, which rejects IPv4 addresses that `validator.IsValidDomain` accepts)
 - `POST /ip/check` - Check IP against a caller-supplied blacklist array
 - `POST /domain/check` - Check domain against a caller-supplied blacklist array
-- `DELETE /clear-cache/{key}` - Delete specific cache entry by key. **Not GET**: the operation is destructive and over GET it is reachable by browser prefetch and cross-site requests. The key must be one this service could have written (`isOwnCacheKey`), otherwise `400`
+- `DELETE /clear-cache/{key}` - Delete specific cache entry by key. **Not GET**: the operation is destructive and over GET it is reachable by browser prefetch and cross-site requests. The key must be one this service could have written (`resolveCacheKey`), otherwise `400`
 
 ## Important Implementation Notes
 
 ### Adding New Blacklists
 
 Update `ipBlacklist` or `domainBlacklist` arrays in [config.toml](../config.toml). Space-separate entries. No code changes needed.
+
+Before adding one, query its test entry (`dig +short 2.0.0.127.<zone>` should return
+`127.0.0.2`) through the resolver production uses. SORBS was removed because its
+zones stopped answering altogether (every IP looked clean). Spamhaus (`zen`,
+`dbl`, `cbl.abuseat.org`), SURBL, URIBL and Senderscore were removed because they
+refuse queries from public and cloud resolvers; do not re-add them without a DQS key
+or a dedicated resolver. Also check the zone is a blacklist at all:
+`abuse.spfbl.net` publishes abuse contacts (TXT `network-abuse@google.com`), and
+listed every domain that has one.
+
+`domainBlacklist` therefore ships with `rhsbl.zapbl.net` only, the one domain list
+that still answers public resolvers. It is aggressive (it lists github.com and
+mailchimp.com too): treat its verdicts accordingly. If a default list is ever empty,
+`GET /domain/{domain}` (or `GET /ip/{ip}`) answers `503` with a pointer to the POST
+endpoint instead of a "not listed" computed from zero queries.
 
 ### Response Headers
 
@@ -360,7 +377,7 @@ IPs must be reversed for DNSBL queries: `1.2.3.4` becomes `4.3.2.1.dnsbl.example
 The `/clear-cache/{key}` endpoint has no authentication.
 
 - It is registered as **`DELETE`**, not `GET`. A destructive operation over GET is reachable by browser prefetch and by a cross-site request. Do not move it back.
-- `isOwnCacheKey()` restricts deletion to keys this service could have written (an IPv4 address, a valid domain, or a `post:ip:` / `post:domain:` prefix). Without it, any client could delete arbitrary keys from a Redis database shared with other applications.
+- `resolveCacheKey()` restricts deletion to keys this service could have written (`ip:`, `domain:`, `post:ip:`, `post:domain:`). A bare IPv4 address or domain is still accepted and mapped to its namespaced key, for clients written before 1.6.16. Without the check, any client could delete arbitrary keys from a Redis database shared with other applications.
 - Do not extend it to support wildcard or bulk deletion. Consider adding rate limiting or restricting to localhost if deploying publicly.
 
 ### Graceful Shutdown
@@ -380,7 +397,8 @@ The `frontend/` directory contains a SvelteKit 5 application with the following 
 - **src/lib/** - Shared code and components
   - `api.ts` - API client functions with fetch wrappers
   - `types.ts` - TypeScript interfaces matching Go API responses
-  - `validators.ts` - Zod schemas for input validation
+  - `validators.ts` - Zod schemas for input validation, including the custom blacklists and nameservers of the advanced options
+  - `verdict.ts` - `verdictOf()`: listed / clean / **incomplete**. A result with `Errors` and no listing is never shown as clean
   - **components/** - Svelte components
     - `CheckForm.svelte` - Main form with IP/domain input, validation, and advanced options
     - `ResultsCard.svelte` - Displays check results with blacklist details
@@ -392,6 +410,18 @@ The `frontend/` directory contains a SvelteKit 5 application with the following 
 - **Configuration files:**
   - `vite.config.ts` - Vite dev server with API proxy (`/api/*` → `http://localhost:8080`) and `@tailwindcss/vite` plugin. It also carries the SvelteKit config (adapter, preprocess): SvelteKit 3 no longer reads `svelte.config.js`
   - `package.json` `imports` defines the `#lib/*` alias (replaces `$lib`); TypeScript imports need an explicit extension (`#lib/api.ts`). `tsconfig.json` extends `$app/tsconfig` and must keep its own `include`/`exclude`
+
+### nginx (frontend/nginx)
+
+- `default.conf.template` serves the precompressed assets (`gzip_static`, fed by
+  `precompress: true` in `vite.config.ts`), gzips the proxied JSON, and sends
+  `Cache-Control: no-cache` on `index.html` so a release is picked up on the next load.
+- `security-headers.conf` is **included in every `location`**, not declared at
+  server level: nginx drops all inherited `add_header` directives in a location
+  that declares its own, so the server-level form silently lost them on the
+  locations that set `Cache-Control`. A new location must include it too.
+- The snippet is copied to `/etc/nginx/snippets/`, not `templates/`: files there are
+  rendered into `conf.d/`, which the http block includes wholesale.
 
 ### Frontend Tech Stack
 
