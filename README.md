@@ -389,7 +389,7 @@ Checks the service status, Redis connectivity, and uptime.
   "CachedItems": 42,
   "Uptime": 3600000000000,
   "GoVersion": "go1.27.4",
-  "Version": "1.6.15",
+  "Version": "1.6.16",
   "MemoryAlloc": 2048
 }
 ```
